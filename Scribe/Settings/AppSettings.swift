@@ -60,11 +60,26 @@ enum ModelService: String, CaseIterable {
         }
     }
 
-    /// ElevenLabs' cheap, read-only "list models" request, which succeeds only with a valid key.
-    static func voiceTestRequest(key: String) -> URLRequest {
-        var request = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/models")!, timeoutInterval: 15)
-        request.setValue(key, forHTTPHeaderField: "xi-api-key")
-        return request
+    /// Requests that ElevenLabs refuses without generating any audio (so they cost no credits), but only after it has
+    /// checked the key and its permission for that endpoint: text to speech with no text, and speech to text with no
+    /// file (JBFqnCBsd6RMkjVDRZzb is one of ElevenLabs' built-in voices). These are the two things Scribe uses ElevenLabs for.
+    static func voiceProbes(key: String) -> [(name: String, request: URLRequest)] {
+        var tts = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb")!,
+                             timeoutInterval: 15)
+        tts.httpMethod = "POST"
+        tts.setValue("application/json", forHTTPHeaderField: "content-type")
+        tts.httpBody = Data(#"{"text":""}"#.utf8)
+
+        var stt = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/speech-to-text")!, timeoutInterval: 15)
+        stt.httpMethod = "POST"
+        stt.setValue("multipart/form-data; boundary=scribe", forHTTPHeaderField: "content-type")
+        stt.httpBody = Data("--scribe\r\nContent-Disposition: form-data; name=\"model_id\"\r\n\r\nscribe_v1\r\n--scribe--\r\n".utf8)
+
+        return [("Text to Speech", tts), ("Speech to Text", stt)].map { name, request in
+            var request = request
+            request.setValue(key, forHTTPHeaderField: "xi-api-key")
+            return (name, request)
+        }
     }
 }
 
@@ -111,25 +126,31 @@ enum ConnectionTester {
             struct Detail: Decodable { let status: String?; let message: String? }
             let detail: Detail?
         }
-        do {
-            let (data, response) = try await URLSession.shared.data(for: ModelService.voiceTestRequest(key: key))
-            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-            if (200..<300).contains(code) { return .connected }
-            let detail = (try? JSONDecoder().decode(Envelope.self, from: data))?.detail
-            switch (code, detail?.status) {
-            case (_, "invalid_api_key"):
-                return .failed("ElevenLabs doesn't recognise this key. Check it was copied in full.")
-            case (_, "missing_permissions"):
-                // The key is real but restricted; say which permission it lacks.
-                return .failed("The key is valid but restricted: \(detail?.message ?? "it's missing a permission").")
-            case (429, _):
-                return .failed("The key works, but ElevenLabs is rate-limiting it right now.")
-            default:
-                return .failed("ElevenLabs (\(code)): \(detail?.message ?? "unknown error").")
+        var missing: [String] = []
+        for probe in ModelService.voiceProbes(key: key) {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: probe.request)
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let detail = (try? JSONDecoder().decode(Envelope.self, from: data))?.detail
+                switch (code, detail?.status) {
+                case (_, "invalid_api_key"):
+                    return .failed("ElevenLabs doesn't recognise this key. Check it was copied in full.")
+                case (_, "missing_permissions"):
+                    missing.append(probe.name)
+                case (429, _):
+                    return .failed("The key works, but ElevenLabs is rate-limiting it right now.")
+                case (500..., _):
+                    return .failed("ElevenLabs returned an error (\(code)). Try again soon.")
+                default:
+                    // Refused only because the request is empty: the key is accepted for this endpoint.
+                    break
+                }
+            } catch {
+                return .failed(error.localizedDescription)
             }
-        } catch {
-            return .failed(error.localizedDescription)
         }
+        if missing.isEmpty { return .connected }
+        return .failed("The key works, but needs access to \(missing.joined(separator: " and ")) in ElevenLabs.")
     }
 }
 
