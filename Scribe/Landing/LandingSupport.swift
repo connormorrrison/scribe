@@ -105,11 +105,18 @@ enum AgentRenderer {
             guard progress > 0 else { return }
             let width = Handwriting.width(of: text, size: size)
             let height = Handwriting.font(size: size).lineHeight
+            let ink = Handwriting.text(text, size: size).foregroundColor(color.color)
+            // Finished writing is never clipped: Caveat's slanted strokes reach past the width it reports.
+            guard progress < 1 else {
+                context.draw(ink, at: at, anchor: .center)
+                return
+            }
+            // While writing, reveal left to right, with room for strokes that lean past each letter's edge.
+            let overhang = size * 0.4
             var reveal = context
-            reveal.clip(to: Path(CGRect(x: at.x - width / 2 - 6, y: at.y - height,
-                                        width: width * min(1, progress) + 6, height: 2 * height)))
-            reveal.draw(Handwriting.text(text, size: size).foregroundColor(color.color),
-                        at: at, anchor: .center)
+            reveal.clip(to: Path(CGRect(x: at.x - width / 2 - overhang, y: at.y - height,
+                                        width: width * progress + overhang, height: 2 * height)))
+            reveal.draw(ink, at: at, anchor: .center)
         }
     }
 }
