@@ -89,7 +89,7 @@ extension PageBackground: Codable {}
 struct NoteFile {
     let directory: URL?
 
-    private var contentURL: URL? { directory?.appendingPathComponent("note.json") }
+    var contentURL: URL? { directory?.appendingPathComponent("note.json") }
 
     func load() -> NoteContent {
         guard let url = contentURL, let data = try? Data(contentsOf: url),

@@ -16,6 +16,7 @@
 		5D4C67CE8E4DA61D198F3613 /* LibraryScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A3180D2749FBC4F034A65EB /* LibraryScreens.swift */; };
 		725DFD56586968C9007B1EBF /* Claude.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4DE0CB64DEF1532373596B3 /* Claude.swift */; };
 		7DAD1CD8DF36FF564CA402A4 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C918495C5E0EF8EDCC9CAFE /* LibraryView.swift */; };
+		8931FD3D4D17A0DDAED66CF0 /* PageRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADC7740DAAC0D91EBC9F066D /* PageRenderer.swift */; };
 		9DD181BD50EBFDFE0C1C8FB4 /* LandingSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 476A60E5A29A896B3B628E93 /* LandingSupport.swift */; };
 		A48ED980C0236EF349B809E7 /* NoteContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F5CBE590B63076DCEB6808B /* NoteContent.swift */; };
 		A59657EF090060E81F858EA8 /* CanvasSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3024B3AD6BB82B96EB939752 /* CanvasSheets.swift */; };
@@ -50,6 +51,7 @@
 		8E7D00974B33FE33E399C2F9 /* DocumentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentsView.swift; sourceTree = "<group>"; };
 		9218C5FA0A854F8BA6DDF814 /* LibraryComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryComponents.swift; sourceTree = "<group>"; };
 		9C918495C5E0EF8EDCC9CAFE /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		ADC7740DAAC0D91EBC9F066D /* PageRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageRenderer.swift; sourceTree = "<group>"; };
 		B9C170F0EA4BE2F97F196EC5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		BB421B9D94FB197E2C91FE44 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		BDB34195BC271AA08CD75181 /* Caveat-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Caveat-OFL.txt"; sourceTree = "<group>"; };
@@ -85,6 +87,7 @@
 				3024B3AD6BB82B96EB939752 /* CanvasSheets.swift */,
 				243DBA695ADE6FE401D00CCE /* CanvasView.swift */,
 				2F5CBE590B63076DCEB6808B /* NoteContent.swift */,
+				ADC7740DAAC0D91EBC9F066D /* PageRenderer.swift */,
 				33D57331068EBC8DCB05B61F /* PageView.swift */,
 				7D24505520B2FD84A084D195 /* ToolPalette.swift */,
 			);
@@ -264,6 +267,7 @@
 				5D4C67CE8E4DA61D198F3613 /* LibraryScreens.swift in Sources */,
 				7DAD1CD8DF36FF564CA402A4 /* LibraryView.swift in Sources */,
 				A48ED980C0236EF349B809E7 /* NoteContent.swift in Sources */,
+				8931FD3D4D17A0DDAED66CF0 /* PageRenderer.swift in Sources */,
 				A7358815B2A071633F2D231D /* PageView.swift in Sources */,
 				C4457AFB46EBCC8F7A30D469 /* ScribeApp.swift in Sources */,
 				F6F3C49E0105FC7C48004286 /* SettingsView.swift in Sources */,

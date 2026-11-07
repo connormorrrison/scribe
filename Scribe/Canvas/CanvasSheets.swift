@@ -201,40 +201,32 @@ private struct PageDropCommit: DropDelegate {
     }
 }
 
-/// A small picture of a page, with its photos, ink and cards.
+/// A small picture of a page, with everything on it (`PageSnapshot`).
 struct PageThumbnail: View {
     let model: CanvasModel
     let page: NotePage
     let background: PageBackground
     @Environment(\.displayScale) private var displayScale
+    @State private var image: UIImage?
 
     var body: some View {
-        GeometryReader { geo in
-            let k = geo.size.width / NotePageMetrics.width
-            ZStack(alignment: .topLeading) {
-                Color.white
-                PageBackgroundView(style: background, regions: [CGRect(origin: .zero, size: geo.size)],
-                                   spacing: NotePageMetrics.backgroundSpacing * k)
-                ForEach(page.images) { placed in
-                    if let image = model.image(named: placed.fileName) {
-                        Image(uiImage: image).resizable()
-                            .frame(width: placed.frame.width * k, height: placed.frame.height * k)
-                            .offset(x: placed.frame.minX * k, y: placed.frame.minY * k)
-                    }
-                }
-                ForEach(page.cards) { card in
-                    RoundedRectangle(cornerRadius: 16 * k, style: .continuous)
-                        .fill(Landing.card)
-                        .frame(width: card.frame.width * k, height: card.frame.height * k)
-                        .offset(x: card.frame.minX * k, y: card.frame.minY * k)
-                }
-                Image(uiImage: lightImage(page.agentDrawing, bounds: page.bounds, scale: k * displayScale)).resizable()
-                Image(uiImage: lightImage(page.drawing, bounds: page.bounds, scale: k * displayScale)).resizable()
+        Color.white
+            .overlay {
+                if let image { Image(uiImage: image).resizable().interpolation(.high) }
             }
-        }
-        .aspectRatio(NotePageMetrics.width / page.height, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+            .aspectRatio(NotePageMetrics.width / page.height, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+            .task(id: Snapshot(page: page, background: background)) {
+                image = PageRenderer.image(of: page, background: background, pixelWidth: 200 * displayScale) {
+                    model.image(named: $0)
+                }
+            }
+    }
+
+    private struct Snapshot: Equatable {
+        let page: NotePage
+        let background: PageBackground
     }
 }
 

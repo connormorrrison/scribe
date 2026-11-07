@@ -181,7 +181,7 @@ struct FolderArtwork: View {
     }
 }
 
-/// What a note or PDF looks like, filling whatever frame it gets: the top of a PDF's first page, or blank paper.
+/// What a note or PDF looks like, filling whatever frame it gets: the top of its first page.
 struct DocumentArtwork: View {
     let document: CanvasDocument
     @Environment(CanvasStore.self) private var store: CanvasStore?
@@ -190,7 +190,7 @@ struct DocumentArtwork: View {
         if document.kind == .pdf, let url = store?.fileURL(for: document) {
             PDFThumbnail(url: url)
         } else {
-            NotePaper()
+            NoteThumbnail(document: document)
         }
     }
 }

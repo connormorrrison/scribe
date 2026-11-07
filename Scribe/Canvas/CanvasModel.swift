@@ -152,12 +152,14 @@ final class CanvasModel {
             try? await Task.sleep(for: .milliseconds(600))
             guard !Task.isCancelled, let self else { return }
             self.file.save(self.content)
+            NoteThumbnails.shared.invalidate(self.document.id)
         }
     }
 
     func saveNow() {
         saveTask?.cancel()
         file.save(content)
+        NoteThumbnails.shared.invalidate(document.id)
     }
 
     private func fixCurrentPage() {
