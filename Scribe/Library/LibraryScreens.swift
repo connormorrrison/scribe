@@ -143,37 +143,11 @@ struct TrashView: View {
     }
 }
 
-struct SettingsView: View {
-    @AppStorage(AppSettings.showIntro) private var showIntro = true
-
-    private var version: String {
-        let info = Bundle.main.infoDictionary
-        let short = info?["CFBundleShortVersionString"] as? String ?? "1.0"
-        let build = info?["CFBundleVersion"] as? String ?? "1"
-        return "\(short) (\(build))"
-    }
-
-    var body: some View {
-        Form {
-            Section("General") {
-                Toggle("Show the intro when Scribe opens", isOn: $showIntro)
-            }
-            Section("About") {
-                LabeledContent("Version", value: version)
-            }
-        }
-        .roundedTitle("Settings", inline: true)
-    }
-}
-
-enum AppSettings {
-    static let showIntro = "showIntro"
-}
-
-/// A note or PDF, opened. The note canvas is still to come: for now a note is a blank dotted page.
+/// A note or PDF, opened. The note canvas is still to come: for now a note is a blank page in the chosen background.
 struct DocumentView: View {
     @Bindable var store: CanvasStore
     let documentID: UUID
+    @AppStorage(AppSettings.pageBackground) private var background = PageBackground.dots
 
     var body: some View {
         Group {
@@ -183,7 +157,7 @@ struct DocumentView: View {
                         PDFKitView(url: url).ignoresSafeArea(edges: .bottom)
                     } else {
                         GeometryReader { geo in
-                            PageBackgroundView(style: .dots, regions: [CGRect(origin: .zero, size: geo.size)])
+                            PageBackgroundView(style: background, regions: [CGRect(origin: .zero, size: geo.size)])
                         }
                         .background(.white)
                         .ignoresSafeArea(edges: .bottom)

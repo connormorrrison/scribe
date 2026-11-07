@@ -3,17 +3,11 @@ import SwiftUI
 @main
 struct ScribeApp: App {
     @State private var store = CanvasStore()
-    /// The landing shows on launch (unless turned off in Settings), until the user swipes up.
-    @State private var showLanding: Bool
+    /// The landing shows on every launch, until the user swipes up.
+    @State private var showLanding = true
     /// Turns true as the landing starts sliding away, so the content pops in underneath it.
-    @State private var revealed: Bool
-
-    init() {
-        let intro = UserDefaults.standard.object(forKey: AppSettings.showIntro) as? Bool ?? true
-        _showLanding = State(initialValue: intro)
-        _revealed = State(initialValue: !intro)
-
-    }
+    @State private var revealed = false
+    @AppStorage(AppSettings.appearance) private var appearance = Appearance.system
 
     var body: some Scene {
         WindowGroup {
@@ -26,6 +20,7 @@ struct ScribeApp: App {
                 }
             }
             .fontDesign(.rounded)
+            .preferredColorScheme(appearance.colorScheme)
         }
     }
 }

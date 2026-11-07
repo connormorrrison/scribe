@@ -110,32 +110,49 @@ enum AgentRenderer {
 
 // MARK: - Page
 
-/// A notebook page's background pattern, drawn in `regions`.
+/// A notebook page's background pattern (dots, grid or nothing), drawn in `regions`.
 struct PageBackgroundView: View {
-    enum Style { case dots }
-
-    let style: Style
+    let style: PageBackground
     let regions: [CGRect]
-
-    static let spacing: CGFloat = 24
-    static let dotRadius: CGFloat = 1.1
+    /// Distance between dots or grid lines; smaller for thumbnails.
+    var spacing: CGFloat = 24
 
     var body: some View {
         Canvas { context, _ in
-            var dots = Path()
-            let r = Self.dotRadius
+            var marks = Path()
+            let r = 1.1 * spacing / 24
             for region in regions {
-                var y = region.minY + Self.spacing / 2
-                while y < region.maxY {
-                    var x = region.minX + Self.spacing / 2
-                    while x < region.maxX {
-                        dots.addEllipse(in: CGRect(x: x - r, y: y - r, width: 2 * r, height: 2 * r))
-                        x += Self.spacing
+                switch style {
+                case .dots:
+                    var y = region.minY + spacing / 2
+                    while y < region.maxY {
+                        var x = region.minX + spacing / 2
+                        while x < region.maxX {
+                            marks.addEllipse(in: CGRect(x: x - r, y: y - r, width: 2 * r, height: 2 * r))
+                            x += spacing
+                        }
+                        y += spacing
                     }
-                    y += Self.spacing
+                case .grid:
+                    var x = region.minX + spacing / 2
+                    while x < region.maxX {
+                        marks.move(to: CGPoint(x: x, y: region.minY)); marks.addLine(to: CGPoint(x: x, y: region.maxY))
+                        x += spacing
+                    }
+                    var y = region.minY + spacing / 2
+                    while y < region.maxY {
+                        marks.move(to: CGPoint(x: region.minX, y: y)); marks.addLine(to: CGPoint(x: region.maxX, y: y))
+                        y += spacing
+                    }
+                case .none:
+                    break
                 }
             }
-            context.fill(dots, with: .color(Color(white: 0.8)))
+            switch style {
+            case .dots: context.fill(marks, with: .color(Color(white: 0.8)))
+            case .grid: context.stroke(marks, with: .color(Color(white: 0.88)), lineWidth: max(0.5, spacing / 36))
+            case .none: break
+            }
         }
         .allowsHitTesting(false)
     }

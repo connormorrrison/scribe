@@ -62,9 +62,9 @@ enum LibraryPrompt: Identifiable, Equatable {
 // MARK: - Grid and tiles
 
 enum LibraryMetrics {
-    static let tileWidth: CGFloat = 168
-    /// US Letter proportions.
-    static let thumbnailHeight: CGFloat = tileWidth * 11 / 8.5
+    static let tileWidth: CGFloat = 200
+    /// Landscape US Letter proportions.
+    static let thumbnailHeight: CGFloat = tileWidth * 8.5 / 11
     static let spacing: CGFloat = 28
 }
 
@@ -77,7 +77,7 @@ struct LibraryGrid<Content: View>: View {
     }
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: LibraryMetrics.tileWidth, maximum: LibraryMetrics.tileWidth + 32),
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: LibraryMetrics.tileWidth),
                                      spacing: LibraryMetrics.spacing, alignment: .topLeading)],
                   spacing: LibraryMetrics.spacing + 4) {
             content
@@ -135,7 +135,7 @@ struct FolderTile: View {
                 .fill(Color.accentColor.opacity(0.08))
                 .overlay {
                     Image(systemName: "folder.fill")
-                        .font(.system(size: 76))
+                        .font(.system(size: 64))
                         .foregroundStyle(Color.accentColor.gradient)
                 }
                 .frame(width: LibraryMetrics.tileWidth, height: LibraryMetrics.thumbnailHeight)
@@ -154,22 +154,13 @@ struct FolderTile: View {
     }
 }
 
-/// A blank dotted page, the thumbnail for a note.
+/// A blank page in the chosen background, the thumbnail for a note.
 struct NotePaper: View {
+    @AppStorage(AppSettings.pageBackground) private var background = PageBackground.dots
+
     var body: some View {
-        Canvas { context, size in
-            let spacing: CGFloat = 12, r: CGFloat = 0.8
-            var dots = Path()
-            var y = spacing
-            while y < size.height {
-                var x = spacing
-                while x < size.width {
-                    dots.addEllipse(in: CGRect(x: x - r, y: y - r, width: 2 * r, height: 2 * r))
-                    x += spacing
-                }
-                y += spacing
-            }
-            context.fill(dots, with: .color(Color(white: 0.8)))
+        GeometryReader { geo in
+            PageBackgroundView(style: background, regions: [CGRect(origin: .zero, size: geo.size)], spacing: 12)
         }
         .background(.white)
     }
@@ -184,13 +175,17 @@ struct PDFThumbnail: View {
         ZStack {
             Color.white
             if let image {
-                Image(uiImage: image).resizable().scaledToFill()
+                // Fills the landscape tile, showing the top of the page.
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: LibraryMetrics.tileWidth, height: LibraryMetrics.thumbnailHeight, alignment: .top)
             } else {
                 Image(systemName: "doc.richtext").font(.system(size: 40)).foregroundStyle(.tertiary)
             }
         }
         .task(id: url) {
-            let size = CGSize(width: LibraryMetrics.tileWidth * 2, height: LibraryMetrics.thumbnailHeight * 2)
+            let size = CGSize(width: LibraryMetrics.tileWidth * 2, height: LibraryMetrics.tileWidth * 4)
             image = await Task.detached(priority: .utility) {
                 PDFDocument(url: url)?.page(at: 0)?.thumbnail(of: size, for: .mediaBox)
             }.value
