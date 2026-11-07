@@ -109,7 +109,13 @@ private struct ModelKeyRows: View {
         HStack(spacing: 12) {
             Button("Test Connection") {
                 status = .testing
-                Task { status = await ConnectionTester.test(model, key: key) }
+                Task {
+                    let tested = key
+                    let result = await ConnectionTester.test(model, key: tested)
+                    ConnectionMemory.record(result, for: model, key: tested)
+                    // Ignore a result for a key that was edited while the test ran.
+                    if tested == key { status = result }
+                }
             }
             .disabled(key.isEmpty || status == .testing)
 
@@ -119,12 +125,14 @@ private struct ModelKeyRows: View {
         .onAppear {
             guard !loaded else { return }
             key = Keychain.read(model) ?? ""
+            if ConnectionMemory.isConnected(model, key: key) { status = .connected }
             loaded = true
         }
         .onChange(of: key) { _, new in
             guard loaded else { return }
             Keychain.save(new, for: model)
-            status = .idle
+            // Still connected only if this is the same key that passed before.
+            status = ConnectionMemory.isConnected(model, key: new) ? .connected : .idle
         }
     }
 

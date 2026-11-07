@@ -1,5 +1,6 @@
 import SwiftUI
 import Security
+import CryptoKit
 
 /// `UserDefaults` keys for app settings (read with `@AppStorage`). API keys are not here: they live in the Keychain.
 enum AppSettings {
@@ -151,6 +152,33 @@ enum ConnectionTester {
         }
         if missing.isEmpty { return .connected }
         return .failed("The key works, but needs access to \(missing.joined(separator: " and ")) in ElevenLabs.")
+    }
+}
+
+/// Remembers which key last passed its connection test, so Settings still says "Connected" after a relaunch or
+/// rebuild. Only a SHA-256 fingerprint is kept (in UserDefaults), never the key, and a different key doesn't match.
+enum ConnectionMemory {
+    private static func defaultsKey(_ model: ModelService) -> String { "connected.\(model.rawValue)" }
+
+    private static func fingerprint(_ key: String) -> String {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        return SHA256.hash(data: Data(trimmed.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func isConnected(_ model: ModelService, key: String) -> Bool {
+        !key.isEmpty && UserDefaults.standard.string(forKey: defaultsKey(model)) == fingerprint(key)
+    }
+
+    static func record(_ status: ConnectionStatus, for model: ModelService, key: String) {
+        switch status {
+        case .connected: UserDefaults.standard.set(fingerprint(key), forKey: defaultsKey(model))
+        case .failed: forget(model)
+        case .idle, .testing: break
+        }
+    }
+
+    static func forget(_ model: ModelService) {
+        UserDefaults.standard.removeObject(forKey: defaultsKey(model))
     }
 }
 
