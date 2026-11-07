@@ -334,22 +334,6 @@ struct ChoiceBanner: View {
     }
 }
 
-struct PlacementBanner: View {
-    let cancel: () -> Void
-    let place: () -> Void
-
-    var body: some View {
-        CanvasBannerBar {
-            Text("Drag to move. Pinch or drag the corner to resize.")
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            Spacer(minLength: 4)
-            Button("Cancel", action: cancel).secondaryActionButton()
-            Button("Place", action: place).primaryActionButton().fontWeight(.semibold)
-        }
-    }
-}
-
 // MARK: - Bottom row
 
 /// "1 / 3", which opens the Pages popover, and + to add a page after this one.
@@ -438,9 +422,12 @@ struct NewPagePlaceholder: View {
     }
 }
 
-/// Pen, Highlighter, Eraser and Lasso. With the pen or highlighter, that tool's colours and the colour well follow.
+/// Pen, Highlighter, Eraser, Lasso and Add Image. With the pen or highlighter, that tool's colours and the colour
+/// well follow.
 struct ToolBar: View {
     let palette: ToolPalette
+    let addPhoto: () -> Void
+    let addFile: () -> Void
     @State private var editing: InkSwatch?
     @State private var showsPicker = false
     /// The colour the picker added; later picks change it rather than adding more.
@@ -459,6 +446,11 @@ struct ToolBar: View {
                         }
                     }
                 }
+                Rectangle()
+                    .fill(.primary.opacity(0.18))
+                    .frame(width: 1, height: 24)
+                    .padding(.horizontal, 4)
+                addImage
             }
             .padding(.horizontal, 4)
             .canvasChrome(Capsule())
@@ -481,6 +473,19 @@ struct ToolBar: View {
                 palette.replace(swatch.id, with: palette.swatch(from: picked))
             }
         }
+    }
+
+    /// Putting a picture on the page is making something, like drawing, so it sits with the tools.
+    private var addImage: some View {
+        Menu {
+            Button("Photo Library", systemImage: "photo.on.rectangle", action: addPhoto)
+            Button("Files", systemImage: "folder", action: addFile)
+        } label: {
+            ChromeSymbol(symbol: "photo.badge.plus")
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add Image")
     }
 
     private func pick(_ tool: CanvasTool) {

@@ -20,10 +20,7 @@ struct PageSnapshot: View {
 
             ForEach(page.images) { placed in
                 if let picture = image(placed.fileName) {
-                    Image(uiImage: picture)
-                        .resizable()
-                        .frame(width: placed.frame.width, height: placed.frame.height)
-                        .offset(x: placed.frame.minX, y: placed.frame.minY)
+                    PlacedImageView(image: picture, placed: placed, scale: 1)
                 }
             }
 
@@ -114,7 +111,7 @@ final class NoteThumbnails {
         for bounds in [page.drawing.bounds, page.agentDrawing.bounds] where !bounds.isNull && !bounds.isEmpty {
             bottom = max(bottom, bounds.maxY)
         }
-        for frame in page.images.map(\.frame) + page.cards.map(\.frame) { bottom = max(bottom, frame.maxY) }
+        for frame in page.images.map(\.bounds) + page.cards.map(\.frame) { bottom = max(bottom, frame.maxY) }
         return bottom
     }
 }

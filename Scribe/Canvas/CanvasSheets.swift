@@ -412,7 +412,14 @@ enum NotePDF {
                 paper.uiImage?.draw(in: rect)
 
                 for placed in page.images {
-                    model.image(named: placed.fileName)?.draw(in: placed.frame)
+                    guard let image = model.image(named: placed.fileName) else { continue }
+                    let cg = context.cgContext
+                    cg.saveGState()
+                    cg.translateBy(x: placed.frame.midX, y: placed.frame.midY)
+                    cg.rotate(by: placed.rotation)
+                    image.draw(in: CGRect(x: -placed.frame.width / 2, y: -placed.frame.height / 2,
+                                          width: placed.frame.width, height: placed.frame.height))
+                    cg.restoreGState()
                 }
                 lightImage(page.agentDrawing, bounds: rect, scale: 2).draw(in: rect)
                 lightImage(page.drawing, bounds: rect, scale: 2).draw(in: rect)

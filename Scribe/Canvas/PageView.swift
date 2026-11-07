@@ -22,10 +22,9 @@ struct PageView: View {
 
             ForEach(page.images) { placed in
                 if let image = model.image(named: placed.fileName) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .frame(width: placed.frame.width * k, height: placed.frame.height * k)
-                        .offset(x: placed.frame.minX * k, y: placed.frame.minY * k)
+                    PlacedImageView(image: image, placed: placed, scale: k)
+                        // The selected image is drawn by its overlay, above the ink, while it's being edited.
+                        .opacity(model.selectedImage?.imageID == placed.id ? 0 : 1)
                 }
             }
 
@@ -38,22 +37,39 @@ struct PageView: View {
             InkCanvas(model: model, pageID: page.id, scale: k, pageHeight: page.height, drawWithFinger: drawWithFinger,
                       reloadToken: model.reloadToken)
                 .frame(width: size.width, height: size.height)
-                // While a photo is being placed, the page is for positioning it.
-                .allowsHitTesting(model.placement == nil)
 
             ForEach(page.cards) { card in
                 AgentCardView(model: model, card: card, scale: k)
                     .offset(x: card.frame.minX * k, y: card.frame.minY * k)
             }
 
-            if let placement = model.placement, placement.pageID == page.id {
-                PlacementOverlay(model: model, placement: placement, scale: k)
+            if let selection = model.selectedImage, selection.pageID == page.id,
+               let placed = model.placedImage(selection), let image = model.image(named: placed.fileName) {
+                ImageSelectionOverlay(model: model, selection: selection, placed: placed, image: image, scale: k,
+                                      pageSize: size)
                     .frame(width: size.width, height: size.height)
+                    .id(placed.id)
             }
         }
         .frame(width: size.width, height: size.height)
         .clipped()
         .accessibilityElement(children: .contain)
+    }
+}
+
+/// A placed image, rotated about its centre. `scale` is screen points per page point.
+struct PlacedImageView: View {
+    let image: UIImage
+    let placed: PlacedImage
+    let scale: CGFloat
+
+    var body: some View {
+        Image(uiImage: image)
+            .resizable()
+            .frame(width: placed.frame.width * scale, height: placed.frame.height * scale)
+            .rotationEffect(.radians(placed.rotation))
+            .position(x: placed.frame.midX * scale, y: placed.frame.midY * scale)
+            .allowsHitTesting(false)
     }
 }
 
@@ -109,6 +125,12 @@ struct InkCanvas: UIViewRepresentable {
         canvas.overrideUserInterfaceStyle = .light
         canvas.delegate = context.coordinator
         context.coordinator.load(into: canvas)
+        // A finger tap selects the image under it (or clears the selection). It never stops ink.
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tapped(_:)))
+        tap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        tap.cancelsTouchesInView = false
+        tap.delegate = context.coordinator
+        canvas.addGestureRecognizer(tap)
         return canvas
     }
 
@@ -116,6 +138,7 @@ struct InkCanvas: UIViewRepresentable {
         let coordinator = context.coordinator
         coordinator.model = model
         coordinator.pageID = pageID
+        coordinator.scale = scale
 
         if canvas.minimumZoomScale != scale || canvas.zoomScale != scale {
             canvas.minimumZoomScale = scale
@@ -132,10 +155,11 @@ struct InkCanvas: UIViewRepresentable {
         if coordinator.token != reloadToken { coordinator.load(into: canvas) }
     }
 
-    final class Coordinator: NSObject, PKCanvasViewDelegate {
+    final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
         var model: CanvasModel
         var pageID: UUID
         var token = -1
+        var scale: CGFloat = 1
         private var loading = false
         /// What `load` last put on the canvas, until the person changes it. PencilKit can report a drawing it was
         /// just given as a change; that echo isn't an edit.
@@ -156,6 +180,21 @@ struct InkCanvas: UIViewRepresentable {
             loaded = fresh
             token = model.reloadToken
             loading = false
+        }
+
+        @MainActor @objc func tapped(_ tap: UITapGestureRecognizer) {
+            guard let view = tap.view, scale > 0 else { return }
+            let point = tap.location(in: view)
+            model.tapPage(pageID, at: CGPoint(x: point.x / scale, y: point.y / scale))
+        }
+
+        /// The tap works alongside drawing (with finger drawing on, a tap is also a dot of ink).
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+
+        /// Starting to draw or erase puts the selected image down.
+        func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
+            MainActor.assumeIsolated { model.selectedImage = nil }
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
@@ -299,54 +338,185 @@ private struct CardButton: View {
     }
 }
 
-// MARK: - Placing a photo
+// MARK: - Editing an image
 
-/// The photo being positioned: drag to move, pinch or drag the corner to resize.
-private struct PlacementOverlay: View {
+/// The selected image, above the ink: drag to move, pinch or drag the corner to resize, twist or drag the top handle
+/// to rotate. Arrange, Delete and Done float below it. Each finished gesture is one undo step.
+private struct ImageSelectionOverlay: View {
     let model: CanvasModel
-    let placement: ImagePlacement
+    let selection: ImageSelection
+    let placed: PlacedImage
+    let image: UIImage
+    /// Screen points per page point.
     let scale: CGFloat
+    let pageSize: CGSize
+
+    // What the gesture in progress has done so far.
     @State private var drag: CGSize = .zero
     @State private var zoom: CGFloat = 1
+    @State private var turn: Double = 0
+    /// While the rotate handle is dragged: the rotation it points to.
+    @State private var handleRotation: Double?
+
+    private static let minSide: CGFloat = 40
+    private static let snap = 0.07
+
+    /// The image as it is right now, gesture included, in page points.
+    private var frame: CGRect {
+        let base = placed.frame
+        let aspect = base.height / max(base.width, 1)
+        let minWidth = Self.minSide / min(1, aspect)
+        let width = min(max(base.width * zoom, minWidth), NotePageMetrics.width * 2)
+        let size = CGSize(width: width, height: width * aspect)
+        let center = CGPoint(x: base.midX + drag.width / scale, y: base.midY + drag.height / scale)
+        return CGRect(x: center.x - size.width / 2, y: center.y - size.height / 2,
+                      width: size.width, height: size.height)
+    }
+
+    private var rotation: Double { Self.snapped(handleRotation ?? placed.rotation + turn) }
+
+    /// The centre in this view's (screen) space.
+    private var screenCenter: CGPoint { CGPoint(x: frame.midX * scale, y: frame.midY * scale) }
 
     var body: some View {
-        let frame = placement.frame
-        let size = CGSize(width: frame.width * scale * zoom, height: frame.height * scale * zoom)
+        let f = frame
+        let current = PlacedImage(fileName: placed.fileName, frame: f, rotation: rotation)
 
-        Image(uiImage: placement.image)
-            .resizable()
-            .frame(width: size.width, height: size.height)
-            .overlay {
-                RoundedRectangle(cornerRadius: 2)
-                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [8, 5]))
+        ZStack(alignment: .topLeading) {
+            Image(uiImage: image)
+                .resizable()
+                .frame(width: f.width * scale, height: f.height * scale)
+                .overlay { Rectangle().strokeBorder(Color.accentColor, lineWidth: 2) }
+                .overlay(alignment: .top) { rotateHandle }
+                .overlay(alignment: .bottomTrailing) { resizeHandle }
+                .contentShape(Rectangle())
+                .gesture(moveScaleRotate)
+                .rotationEffect(.radians(rotation))
+                .position(screenCenter)
+                .accessibilityElement()
+                .accessibilityLabel("Selected image")
+                .accessibilityHint("Drag to move. Pinch to resize. Twist to rotate.")
+
+            actions
+                .position(actionsPosition(for: current.bounds))
+        }
+        .coordinateSpace(name: Self.space)
+    }
+
+    private static let space = "imageSelection"
+
+    // MARK: Gestures
+
+    private var moveScaleRotate: some Gesture {
+        // Measured in the overlay's space, which stays still. In the image's own space (the default), the image
+        // moving under the finger changes the measurement, and the image shakes.
+        DragGesture(minimumDistance: 1, coordinateSpace: .named(Self.space))
+            .simultaneously(with: MagnifyGesture().simultaneously(with: RotateGesture()))
+            .onChanged { value in
+                drag = value.first?.translation ?? .zero
+                zoom = value.second?.first?.magnification ?? 1
+                turn = value.second?.second?.rotation.radians ?? 0
             }
-            .overlay(alignment: .bottomTrailing) {
-                Circle()
-                    .fill(Color.accentColor)
-                    .frame(width: 22, height: 22)
-                    .overlay(Circle().stroke(.white, lineWidth: 2))
-                    .offset(x: 11, y: 11)
-                    .gesture(
-                        DragGesture()
-                            .onChanged { zoom = max(0.1, 1 + $0.translation.width / max(size.width / zoom, 1)) }
-                            .onEnded { _ in model.scalePlacement(by: zoom); zoom = 1 }
-                    )
-                    .accessibilityLabel("Resize")
-            }
-            .position(x: frame.midX * scale + drag.width, y: frame.midY * scale + drag.height)
+            .onEnded { _ in commit(toFront: drag != .zero) }
+    }
+
+    /// Scales about the centre: the image grows as the handle moves away from the centre.
+    private var resizeHandle: some View {
+        handle(symbol: "arrow.up.left.and.arrow.down.right")
+            .offset(x: 14, y: 14)
             .gesture(
-                DragGesture()
-                    .onChanged { drag = $0.translation }
-                    .onEnded { value in
-                        model.movePlacement(by: CGSize(width: value.translation.width / scale,
-                                                       height: value.translation.height / scale))
-                        drag = .zero
+                DragGesture(coordinateSpace: .named(Self.space))
+                    .onChanged { value in
+                        let c = screenCenter
+                        let start = hypot(value.startLocation.x - c.x, value.startLocation.y - c.y)
+                        let now = hypot(value.location.x - c.x, value.location.y - c.y)
+                        if start > 1 { zoom = now / start }
                     }
-                    .simultaneously(with:
-                        MagnifyGesture()
-                            .onChanged { zoom = $0.magnification }
-                            .onEnded { model.scalePlacement(by: $0.magnification); zoom = 1 }
-                    )
+                    .onEnded { _ in commit() }
             )
+            .accessibilityLabel("Resize")
+    }
+
+    /// Points the top of the image at the finger. Snaps to upright and to quarter turns.
+    private var rotateHandle: some View {
+        VStack(spacing: 0) {
+            handle(symbol: "arrow.clockwise")
+            Rectangle().fill(Color.accentColor).frame(width: 2, height: 16)
+        }
+        .offset(y: -44)
+        .gesture(
+            DragGesture(coordinateSpace: .named(Self.space))
+                .onChanged { value in
+                    let c = screenCenter
+                    handleRotation = atan2(value.location.y - c.y, value.location.x - c.x) + .pi / 2
+                }
+                .onEnded { _ in commit() }
+        )
+        .accessibilityLabel("Rotate")
+    }
+
+    private func handle(symbol: String) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Color.accentColor)
+            .frame(width: 28, height: 28)
+            .background(.white, in: Circle())
+            .overlay(Circle().strokeBorder(Color.accentColor, lineWidth: 2))
+            .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
+    }
+
+    private func commit(toFront: Bool = false) {
+        let f = frame, r = rotation
+        drag = .zero
+        zoom = 1
+        turn = 0
+        handleRotation = nil
+        guard f != placed.frame || abs(r - placed.rotation) > 0.0001 else { return }
+        model.transformImage(selection, frame: f, rotation: r, toFront: toFront)
+    }
+
+    private static func snapped(_ angle: Double) -> Double {
+        let quarter = Double.pi / 2
+        let nearest = (angle / quarter).rounded() * quarter
+        return abs(angle - nearest) < snap ? nearest : angle
+    }
+
+    // MARK: Arrange, Delete and Done
+
+    private var actions: some View {
+        HStack(spacing: 0) {
+            Menu {
+                ForEach([ImageArrangement.front, .forward, .backward, .back], id: \.self) { arrangement in
+                    Button(arrangement.title, systemImage: arrangement.symbol) {
+                        withAnimation(.snappy) { model.arrangeImage(selection, arrangement) }
+                    }
+                    .disabled(!model.canArrange(selection, arrangement))
+                }
+            } label: {
+                ChromeSymbol(symbol: "square.3.layers.3d")
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Arrange")
+            ChromeButton(title: "Delete Image", symbol: "trash") {
+                withAnimation(.snappy) { model.deleteImage(selection) }
+            }
+            ChromeButton(title: "Done", symbol: "checkmark") {
+                withAnimation(.snappy) { model.selectedImage = nil }
+            }
+        }
+        .padding(.horizontal, 4)
+        .canvasChrome(Capsule())
+    }
+
+    /// Below the image, or above it (clear of the rotate handle) when there's no room below.
+    private func actionsPosition(for bounds: CGRect) -> CGPoint {
+        let x = min(max(bounds.midX * scale, 90), pageSize.width - 90)
+        let below = bounds.maxY * scale + 44
+        let above = bounds.minY * scale - 84
+        let y = below < pageSize.height - 110 || above < 90 ? below : above
+        return CGPoint(x: x, y: y)
     }
 }

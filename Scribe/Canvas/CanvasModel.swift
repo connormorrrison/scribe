@@ -14,13 +14,33 @@ enum CanvasBanner: Equatable {
     case choice(prompt: String, options: [String])
 }
 
-/// A photo being positioned before it's placed on the page.
-struct ImagePlacement {
+/// The image that's selected for moving, resizing and rotating.
+struct ImageSelection: Equatable {
     var pageID: UUID
-    var image: UIImage
-    var data: Data
-    /// In page points.
-    var frame: CGRect
+    var imageID: UUID
+}
+
+/// Where an image goes among the page's other images.
+enum ImageArrangement {
+    case front, forward, backward, back
+
+    var title: String {
+        switch self {
+        case .front: "Bring to Front"
+        case .forward: "Bring Forward"
+        case .backward: "Send Backward"
+        case .back: "Send to Back"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .front: "square.3.layers.3d.top.filled"
+        case .forward: "square.2.layers.3d.top.filled"
+        case .backward: "square.2.layers.3d.bottom.filled"
+        case .back: "square.3.layers.3d.bottom.filled"
+        }
+    }
 }
 
 /// Play state for an animated card.
@@ -64,7 +84,7 @@ final class CanvasModel {
 
     var agent = AgentState.idle
     var banner: CanvasBanner?
-    var placement: ImagePlacement?
+    var selectedImage: ImageSelection?
     var showsKeyboard = false
     var enlargedCard: AgentCard?
     private(set) var clocks: [UUID: AnimationClock] = [:]
@@ -118,6 +138,7 @@ final class CanvasModel {
             model.reloadToken += 1
             model.registerUndo(name, restoring: current)
             model.fixCurrentPage()
+            if let selection = model.selectedImage, model.placedImage(selection) == nil { model.selectedImage = nil }
             model.changed()
         }
         undoManager.setActionName(name)
@@ -336,50 +357,90 @@ final class CanvasModel {
         return image
     }
 
-    /// Starts positioning a photo on the current page.
-    func beginPlacement(_ data: Data) {
+    /// Puts a picked image in the middle of the page on screen, selected, so it can be moved and sized straight
+    /// away. One undo step.
+    func addImage(_ data: Data) {
         guard let image = UIImage(data: data), image.size.width > 0, image.size.height > 0,
-              let pageID = currentPageID ?? content.pages.first?.id, let page = page(pageID) else {
+              let pageID = currentPageID ?? content.pages.first?.id, let i = index(of: pageID) else {
             banner = .error("That image couldn't be opened.")
             return
         }
+        let page = content.pages[i]
         let fit = min(520 / image.size.width, 420 / image.size.height, 1)
         let size = CGSize(width: image.size.width * fit, height: image.size.height * fit)
-        let frame = CGRect(x: (NotePageMetrics.width - size.width) / 2, y: (min(page.height, 850) - size.height) / 2,
+        let visible = min(page.height, screenPageHeight)
+        let frame = CGRect(x: (NotePageMetrics.width - size.width) / 2, y: (visible - size.height) / 2,
                            width: size.width, height: size.height)
-        placement = ImagePlacement(pageID: pageID, image: image, data: data, frame: frame)
-    }
-
-    func movePlacement(by offset: CGSize) {
-        guard var p = placement, let page = page(p.pageID) else { return }
-        p.frame.origin.x = min(max(p.frame.minX + offset.width, -p.frame.width / 2), page.bounds.maxX - p.frame.width / 2)
-        p.frame.origin.y = min(max(p.frame.minY + offset.height, -p.frame.height / 2), page.bounds.maxY - p.frame.height / 2)
-        placement = p
-    }
-
-    /// Scales the photo being placed about its centre.
-    func scalePlacement(by factor: CGFloat) {
-        guard var p = placement else { return }
-        let width = min(max(p.frame.width * factor, 60), NotePageMetrics.width)
-        let scale = width / p.frame.width
-        let center = CGPoint(x: p.frame.midX, y: p.frame.midY)
-        p.frame.size = CGSize(width: p.frame.width * scale, height: p.frame.height * scale)
-        p.frame.origin = CGPoint(x: center.x - p.frame.width / 2, y: center.y - p.frame.height / 2)
-        placement = p
-    }
-
-    func cancelPlacement() { placement = nil }
-
-    func place() {
-        guard let p = placement, let i = index(of: p.pageID) else { placement = nil; return }
-        let data = p.image.jpegData(compressionQuality: 0.9) ?? p.data
-        let name = file.saveImage(data)
-        images[name] = p.image
+        let normalized = image.normalizedUp()
+        let name = file.saveImage(normalized.jpegData(compressionQuality: 0.9) ?? data)
+        images[name] = normalized
+        let placed = PlacedImage(fileName: name, frame: frame)
         edit("Add Image", reload: false) {
-            $0.pages[i].images.append(PlacedImage(fileName: name, frame: p.frame))
+            $0.pages[i].images.append(placed)
             $0.history.append(HistoryEntry(author: .you, text: "Added an image to page \(i + 1)"))
         }
-        placement = nil
+        selectedImage = ImageSelection(pageID: pageID, imageID: placed.id)
+    }
+
+    func placedImage(_ selection: ImageSelection) -> PlacedImage? {
+        page(selection.pageID)?.images.first { $0.id == selection.imageID }
+    }
+
+    /// A finger tap on a page: selects the topmost image under it, or clears the selection.
+    func tapPage(_ pageID: UUID, at point: CGPoint) {
+        guard let page = page(pageID), let hit = page.images.last(where: { $0.contains(point) }) else {
+            selectedImage = nil
+            return
+        }
+        selectedImage = ImageSelection(pageID: pageID, imageID: hit.id)
+    }
+
+    /// Moves, resizes or rotates an image (the end of one gesture: one undo step). A dragged image comes to the
+    /// front, so it never ends up hidden behind another.
+    func transformImage(_ selection: ImageSelection, frame: CGRect, rotation: Double, toFront: Bool = false) {
+        guard let i = index(of: selection.pageID),
+              let j = content.pages[i].images.firstIndex(where: { $0.id == selection.imageID }) else { return }
+        edit("Move Image", reload: false) {
+            $0.pages[i].images[j].frame = frame
+            $0.pages[i].images[j].rotation = rotation
+            if toFront { $0.pages[i].images.append($0.pages[i].images.remove(at: j)) }
+        }
+    }
+
+    /// Where the selected image sits among the page's images, from back (0) to front.
+    func canArrange(_ selection: ImageSelection, _ arrangement: ImageArrangement) -> Bool {
+        guard let images = page(selection.pageID)?.images,
+              let j = images.firstIndex(where: { $0.id == selection.imageID }) else { return false }
+        switch arrangement {
+        case .front, .forward: return j < images.count - 1
+        case .backward, .back: return j > 0
+        }
+    }
+
+    /// Moves an image in front of or behind the page's other images (still under the ink). One undo step.
+    func arrangeImage(_ selection: ImageSelection, _ arrangement: ImageArrangement) {
+        guard canArrange(selection, arrangement), let i = index(of: selection.pageID),
+              let j = content.pages[i].images.firstIndex(where: { $0.id == selection.imageID }) else { return }
+        let last = content.pages[i].images.count - 1
+        let to: Int = switch arrangement {
+        case .front: last
+        case .forward: j + 1
+        case .backward: j - 1
+        case .back: 0
+        }
+        edit(arrangement.title, reload: false) {
+            let image = $0.pages[i].images.remove(at: j)
+            $0.pages[i].images.insert(image, at: to)
+        }
+    }
+
+    func deleteImage(_ selection: ImageSelection) {
+        guard let i = index(of: selection.pageID) else { return }
+        edit("Delete Image", reload: false) {
+            $0.pages[i].images.removeAll { $0.id == selection.imageID }
+            $0.history.append(HistoryEntry(author: .you, text: "Deleted an image from page \(i + 1)"))
+        }
+        selectedImage = nil
     }
 
     // MARK: Agent
@@ -437,6 +498,16 @@ final class CanvasModel {
             return false
         }
         return true
+    }
+}
+
+extension UIImage {
+    /// The same picture with its orientation applied, so drawing it never depends on EXIF.
+    func normalizedUp() -> UIImage {
+        guard imageOrientation != .up else { return self }
+        return UIGraphicsImageRenderer(size: size, format: imageRendererFormat).image { _ in
+            draw(in: CGRect(origin: .zero, size: size))
+        }
     }
 }
 

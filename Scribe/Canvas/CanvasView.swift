@@ -6,8 +6,9 @@ import UniformTypeIdentifiers
 ///
 /// - Top: Back, the agent control, Undo / Redo, and Share / More (note-wide things). Banners (error, choice,
 ///   placing a photo) slide in below.
-/// - Bottom: the page pill (everything about pages), the tools and colours, Add Image, and the type-to-agent toggle
-///   (which opens a field in the agent bar).
+/// - Bottom: the page pill (everything about pages), the tools (with Add Image) and colours, and the type-to-agent
+///   toggle (which opens a field in the agent bar).
+/// - A placed image is selected by tapping it with a finger; it then moves, resizes and rotates in place.
 ///
 /// Each cluster is a separate piece of Liquid Glass inside one container per edge (`ChromeGroup`).
 /// - The pages sit under them, one screen each, edge to edge: the dots mean "you can write here". Swipe between
@@ -59,27 +60,39 @@ struct CanvasView: View {
         .task(id: model.currentPageID) { await flashPageLabel() }
         .background(Color.white.ignoresSafeArea())
         .animation(.snappy, value: model.banner)
-        .animation(.snappy, value: model.placement != nil)
+        .animation(.snappy, value: model.selectedImage)
+        // Turning the page puts the selected image down.
+        .onChange(of: model.currentPageID) { _, _ in model.selectedImage = nil }
         .animation(.snappy, value: model.showsKeyboard)
         .sheet(isPresented: $showsHistory) { HistorySheet(entries: model.content.history) }
         .sheet(isPresented: $showsSettings) { SettingsSheet() }
         .sheet(item: $shareURL) { url in ShareSheet(items: [url]) }
         .fullScreenCover(item: $model.enlargedCard) { card in EnlargedCard(model: model, card: card) }
-        .fileExporter(isPresented: Binding(get: { exportFile != nil }, set: { if !$0 { exportFile = nil } }),
-                      document: exportFile, contentType: .pdf, defaultFilename: model.document.title) { _ in }
-        .photosPicker(isPresented: $showsPhotos, selection: $photoItem, matching: .images)
+        // The photo picker, the Files picker and the PDF exporter each sit on their own view: on one view, the last
+        // of them wins and the others never appear.
+        .background {
+            Color.clear
+                .photosPicker(isPresented: $showsPhotos, selection: $photoItem, matching: .images)
+        }
+        .background {
+            Color.clear
+                .fileImporter(isPresented: $showsFiles, allowedContentTypes: [.image]) { result in
+                    guard case .success(let url) = result else { return }
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    placeImage(try? Data(contentsOf: url))
+                }
+        }
+        .background {
+            Color.clear
+                .fileExporter(isPresented: Binding(get: { exportFile != nil }, set: { if !$0 { exportFile = nil } }),
+                              document: exportFile, contentType: .pdf,
+                              defaultFilename: model.document.title) { _ in }
+        }
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
-            Task {
-                if let data = try? await item.loadTransferable(type: Data.self) { model.beginPlacement(data) }
-                photoItem = nil
-            }
-        }
-        .fileImporter(isPresented: $showsFiles, allowedContentTypes: [.image]) { result in
-            guard case .success(let url) = result else { return }
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            if let data = try? Data(contentsOf: url) { model.beginPlacement(data) }
+            photoItem = nil
+            Task { placeImage(try? await item.loadTransferable(type: Data.self)) }
         }
         .onDisappear { model.saveNow() }
     }
@@ -112,7 +125,8 @@ struct CanvasView: View {
         .background(Color(.systemGray5))
         .scrollPosition(id: pagePosition)
         // While a photo is being placed, a drag moves the photo.
-        .scrollDisabled(model.placement != nil)
+        // While an image is selected, a drag moves the image, not the page.
+        .scrollDisabled(model.selectedImage != nil)
         .scrollDismissesKeyboard(.interactively)
         .onAppear { fitPages(size) }
         .onChange(of: size) { _, new in fitPages(new) }
@@ -202,10 +216,7 @@ struct CanvasView: View {
 
     @ViewBuilder
     private var banners: some View {
-        if model.placement != nil {
-            PlacementBanner(cancel: { model.cancelPlacement() }, place: { model.place() })
-                .transition(.move(edge: .top).combined(with: .opacity))
-        } else if case .error(let text) = model.banner {
+        if case .error(let text) = model.banner {
             ErrorBanner(message: text, openSettings: { showsSettings = true }, retry: { model.retry() })
                 .transition(.move(edge: .top).combined(with: .opacity))
         } else if case .choice(let prompt, let options) = model.banner {
@@ -265,20 +276,6 @@ struct CanvasView: View {
         Binding(get: { background }, set: { model.setBackground($0) })
     }
 
-    /// Next to the tools: putting a picture on the page is making something, like drawing.
-    private var addImageMenu: some View {
-        Menu {
-            Button("Photo Library", systemImage: "photo.on.rectangle") { showsPhotos = true }
-            Button("Files", systemImage: "folder") { showsFiles = true }
-        } label: {
-            ChromeSymbol(symbol: "photo.badge.plus")
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .canvasChrome(Capsule())
-        .accessibilityLabel("Add Image")
-    }
-
     // MARK: Bottom edge
 
     private var bottomEdge: some View {
@@ -297,8 +294,10 @@ struct CanvasView: View {
                     .fixedSize()
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                ToolBar(palette: model.palette)
-                addImageMenu
+                // In the middle, and never squeezed: the sides give way first.
+                ToolBar(palette: model.palette, addPhoto: { showsPhotos = true }, addFile: { showsFiles = true })
+                    .fixedSize()
+                    .layoutPriority(1)
 
                 ChromeButton(title: "Type to the Agent", symbol: "keyboard", selected: model.showsKeyboard) {
                     model.showsKeyboard.toggle()
@@ -312,6 +311,15 @@ struct CanvasView: View {
     }
 
     // MARK: Actions
+
+    /// Puts a picked image on the page, selected, or says why it can't.
+    private func placeImage(_ data: Data?) {
+        guard let data else {
+            model.banner = .error("That image couldn't be opened.")
+            return
+        }
+        withAnimation(.snappy) { model.addImage(data) }
+    }
 
     private func share() {
         let url = FileManager.default.temporaryDirectory

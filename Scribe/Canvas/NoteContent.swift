@@ -15,8 +15,42 @@ struct PlacedImage: Identifiable, Codable, Equatable {
     var id = UUID()
     /// The file inside the note's directory.
     var fileName: String
-    /// In page points.
+    /// In page points, before rotation.
     var frame: CGRect
+    /// Radians, clockwise, about the frame's centre.
+    var rotation: Double = 0
+
+    init(fileName: String, frame: CGRect, rotation: Double = 0) {
+        self.fileName = fileName
+        self.frame = frame
+        self.rotation = rotation
+    }
+
+    /// Notes saved before images could rotate have no rotation.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        fileName = try c.decode(String.self, forKey: .fileName)
+        frame = try c.decode(CGRect.self, forKey: .frame)
+        rotation = try c.decodeIfPresent(Double.self, forKey: .rotation) ?? 0
+    }
+
+    var center: CGPoint { CGPoint(x: frame.midX, y: frame.midY) }
+
+    /// Whether a page point falls on the image, rotation included.
+    func contains(_ point: CGPoint) -> Bool {
+        let d = CGPoint(x: point.x - frame.midX, y: point.y - frame.midY)
+        let c = cos(-rotation), s = sin(-rotation)
+        let local = CGPoint(x: d.x * c - d.y * s, y: d.x * s + d.y * c)
+        return abs(local.x) <= frame.width / 2 && abs(local.y) <= frame.height / 2
+    }
+
+    /// The rotated image's bounding box.
+    var bounds: CGRect {
+        frame.applying(CGAffineTransform(translationX: -frame.midX, y: -frame.midY)
+            .concatenating(CGAffineTransform(rotationAngle: rotation))
+            .concatenating(CGAffineTransform(translationX: frame.midX, y: frame.midY)))
+    }
 }
 
 /// A visualization the agent made on the page.
