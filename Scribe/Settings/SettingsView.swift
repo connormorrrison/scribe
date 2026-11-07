@@ -19,7 +19,7 @@ struct SettingsView: View {
             } header: {
                 Text("AI Model")
             } footer: {
-                Text("Your Anthropic API key. The agents use it to read your page and write, draw and build alongside you.")
+                Text("Your Anthropic API key. The agents use it to read your page and write, draw and build alongside you. Scribe only ever uses \(ClaudeModel.displayName).")
             }
 
             Section {

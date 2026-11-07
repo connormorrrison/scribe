@@ -60,18 +60,10 @@ enum ModelService: String, CaseIterable {
         }
     }
 
-    /// A cheap, read-only request that succeeds only with a valid key: the provider's "list models".
-    func testRequest(key: String) -> URLRequest {
-        var request: URLRequest
-        switch self {
-        case .ai:
-            request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/models")!, timeoutInterval: 15)
-            request.setValue(key, forHTTPHeaderField: "x-api-key")
-            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        case .voice:
-            request = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/models")!, timeoutInterval: 15)
-            request.setValue(key, forHTTPHeaderField: "xi-api-key")
-        }
+    /// ElevenLabs' cheap, read-only "list models" request, which succeeds only with a valid key.
+    static func voiceTestRequest(key: String) -> URLRequest {
+        var request = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/models")!, timeoutInterval: 15)
+        request.setValue(key, forHTTPHeaderField: "xi-api-key")
         return request
     }
 }
@@ -86,14 +78,42 @@ enum ConnectionTester {
     static func test(_ model: ModelService, key: String) async -> ConnectionStatus {
         let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return .failed("Enter an API key first.") }
+        switch model {
+        case .ai: return await testClaude(key: key)
+        case .voice: return await testElevenLabs(key: key)
+        }
+    }
+
+    /// Sends a real one-line request to Claude Haiku 5.5, so a pass means the agents will work.
+    private static func testClaude(key: String) async -> ConnectionStatus {
         do {
-            let (_, response) = try await URLSession.shared.data(for: model.testRequest(key: key))
-            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-            switch code {
+            let reply = try await ClaudeClient(apiKey: key).ping()
+            guard reply.model == ClaudeModel.id else {
+                return .failed("Anthropic answered with \(reply.model) instead of \(ClaudeModel.displayName).")
+            }
+            return .connected
+        } catch let error as ClaudeClient.APIError {
+            switch error.status {
+            case 401: return .failed("Anthropic rejected this key.")
+            case 403: return .failed("This key isn't allowed to use \(ClaudeModel.displayName).")
+            case 404: return .failed("\(ClaudeModel.displayName) isn't available to this key.")
+            case 429: return .failed("The key works, but Anthropic is rate-limiting it right now.")
+            case 529: return .failed("The key works, but Anthropic is overloaded. Try again soon.")
+            default: return .failed(error.localizedDescription)
+            }
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    private static func testElevenLabs(key: String) async -> ConnectionStatus {
+        do {
+            let (_, response) = try await URLSession.shared.data(for: ModelService.voiceTestRequest(key: key))
+            switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
             case 200..<300: return .connected
-            case 400, 401, 403: return .failed("\(model.provider) rejected this key.")
-            case 429: return .failed("The key works, but \(model.provider) is rate-limiting it right now.")
-            default: return .failed("\(model.provider) returned an error (\(code)).")
+            case 400, 401, 403: return .failed("ElevenLabs rejected this key.")
+            case 429: return .failed("The key works, but ElevenLabs is rate-limiting it right now.")
+            case let code: return .failed("ElevenLabs returned an error (\(code)).")
             }
         } catch {
             return .failed(error.localizedDescription)
