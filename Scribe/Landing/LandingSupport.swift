@@ -1,0 +1,167 @@
+import SwiftUI
+import UIKit
+
+// Minimal versions of the canvas-agent types `LandingView` draws with. They cover only what the landing screen
+// needs (pacing, colours, handwritten labels, the dotted page and page fitting) and can grow into the real thing.
+
+// MARK: - Pacing
+
+enum AgentPacing {
+    /// Cursor flight between marks.
+    static let travel: Double = 0.35
+    static let circle: Double = 1.0
+    static let arrow: Double = 0.6
+    static let check: Double = 0.35
+
+    /// A freehand stroke: quicker per point the longer it is, within sensible bounds.
+    static func strokeDuration(length: CGFloat) -> Double {
+        min(1.4, max(0.25, 0.15 + Double(length) / 700))
+    }
+
+    /// Handwriting speed for a label of `characters` characters.
+    static func write(characters: Int) -> Double { 0.25 + 0.05 * Double(characters) }
+}
+
+enum Easing {
+    static func inOut(_ x: Double) -> Double { Ease.inOut(x) }
+}
+
+// MARK: - Colour
+
+struct AgentColor {
+    let color: Color
+
+    /// `"#RRGGBB"`.
+    init(_ hex: String) {
+        let value = UInt32(hex.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0
+        color = Color(red: Double((value >> 16) & 0xFF) / 255,
+                      green: Double((value >> 8) & 0xFF) / 255,
+                      blue: Double(value & 0xFF) / 255)
+    }
+}
+
+// MARK: - Actions
+
+enum AgentAction {
+    /// Handwritten text centred on `at`.
+    case writeLabel(text: String, at: CGPoint, color: AgentColor, size: CGFloat)
+
+    var duration: Double {
+        switch self {
+        case let .writeLabel(text, _, _, _): AgentPacing.write(characters: text.count)
+        }
+    }
+}
+
+/// The agent's handwriting face and its metrics. All agent writing uses Caveat (bundled, see DESIGN.md).
+enum Handwriting {
+    static let fontName = "Caveat-Regular"
+    /// Caveat runs small for its point size; this brings it up to match the agent's pen strokes.
+    static let sizeScale: CGFloat = 1.25
+    /// Caveat is a variable font; 600 reads like a felt-tip next to 3 pt ink strokes.
+    static let weight: CGFloat = 600
+
+    static func font(size: CGFloat) -> UIFont {
+        guard let base = UIFont(name: fontName, size: size * sizeScale) else { return .systemFont(ofSize: size) }
+        let wght = 0x7767_6874 // 'wght'
+        let descriptor = base.fontDescriptor.addingAttributes([
+            UIFontDescriptor.AttributeName(rawValue: kCTFontVariationAttribute as String): [wght: weight],
+        ])
+        return UIFont(descriptor: descriptor, size: size * sizeScale)
+    }
+
+    static func swiftUIFont(size: CGFloat) -> Font { Font(font(size: size) as CTFont) }
+
+    static func width(of text: String, size: CGFloat) -> CGFloat {
+        (text as NSString).size(withAttributes: [.font: font(size: size)]).width
+    }
+}
+
+enum AgentGeometry {
+    /// Where the cursor tip is a fraction `progress` of the way through `action`.
+    static func cursorPoint(for action: AgentAction, progress: Double) -> CGPoint? {
+        switch action {
+        case let .writeLabel(text, at, _, size):
+            let width = Handwriting.width(of: text, size: size)
+            let p = min(1, max(0, progress))
+            // Rides along the baseline, hopping a little with each letter.
+            let hop = size * 0.12 * sin(p * Double(max(1, text.count)) * .pi)
+            return CGPoint(x: at.x - width / 2 + width * p, y: at.y + size * 0.2 - hop)
+        }
+    }
+}
+
+enum AgentRenderer {
+    /// Draws `action` as far as `progress` (0…1), revealing handwriting left to right.
+    static func draw(_ action: AgentAction, progress: Double, seed: Double, in context: inout GraphicsContext) {
+        switch action {
+        case let .writeLabel(text, at, color, size):
+            guard progress > 0 else { return }
+            let width = Handwriting.width(of: text, size: size)
+            let height = Handwriting.font(size: size).lineHeight
+            var reveal = context
+            reveal.clip(to: Path(CGRect(x: at.x - width / 2 - 6, y: at.y - height,
+                                        width: width * min(1, progress) + 6, height: 2 * height)))
+            reveal.draw(Text(text).font(Handwriting.swiftUIFont(size: size)).foregroundColor(color.color),
+                        at: at, anchor: .center)
+        }
+    }
+}
+
+// MARK: - Page
+
+/// A notebook page's background pattern, drawn in `regions`.
+struct PageBackgroundView: View {
+    enum Style { case dots }
+
+    let style: Style
+    let regions: [CGRect]
+
+    static let spacing: CGFloat = 24
+    static let dotRadius: CGFloat = 1.1
+
+    var body: some View {
+        Canvas { context, _ in
+            var dots = Path()
+            let r = Self.dotRadius
+            for region in regions {
+                var y = region.minY + Self.spacing / 2
+                while y < region.maxY {
+                    var x = region.minX + Self.spacing / 2
+                    while x < region.maxX {
+                        dots.addEllipse(in: CGRect(x: x - r, y: y - r, width: 2 * r, height: 2 * r))
+                        x += Self.spacing
+                    }
+                    y += Self.spacing
+                }
+            }
+            context.fill(dots, with: .color(Color(white: 0.8)))
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+enum SamplePDF {
+    case letter
+
+    /// Page size in points.
+    var size: CGSize {
+        switch self {
+        case .letter: CGSize(width: 612, height: 792)
+        }
+    }
+}
+
+/// Page-fitting rules for the note canvas.
+enum ZoomScrollView {
+    /// Room taken by the canvas toolbar above and below the page.
+    static let chromeTop: CGFloat = 56
+    static let chromeBottom: CGFloat = 0
+
+    /// The zoom at which `page` fits the screen between the chrome and side margins.
+    static func fit(page: CGSize, in screen: CGSize, top: CGFloat, bottom: CGFloat, side: CGFloat) -> CGFloat {
+        let width = max(1, screen.width - 2 * side) / page.width
+        let height = max(1, screen.height - top - bottom) / page.height
+        return max(0.01, min(width, height))
+    }
+}

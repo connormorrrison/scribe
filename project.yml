@@ -8,9 +8,15 @@ targets:
     type: application
     platform: iOS
     sources: [Scribe]
+    info:
+      path: Scribe/Info.plist
+      properties:
+        UIAppFonts: [Caveat.ttf]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.connormorrison.scribe
+        DEVELOPMENT_TEAM: 9Q39KHPLZH
+        CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "2"
         SWIFT_VERSION: "5.0"
         MARKETING_VERSION: "1.0"

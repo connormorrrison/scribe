@@ -7,17 +7,37 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0CA0129A11C9832DE88247C4 /* Caveat-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = BDB34195BC271AA08CD75181 /* Caveat-OFL.txt */; };
+		3B685F1084467D6DDEEF120E /* LandingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C746A923AB93043D4A2EF9ED /* LandingView.swift */; };
+		3F361F29058A0480D0BE6709 /* Caveat.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 4ED2E734490566000F0A1854 /* Caveat.ttf */; };
+		9DD181BD50EBFDFE0C1C8FB4 /* LandingSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 476A60E5A29A896B3B628E93 /* LandingSupport.swift */; };
 		AEED381763459F5F54EC8408 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E66F58B9DD78240A1F23C206 /* ContentView.swift */; };
 		C4457AFB46EBCC8F7A30D469 /* ScribeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 572ACD849DC28AE0C35FCA9B /* ScribeApp.swift */; };
+		F6EB18EEAA041A038DFC5752 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0D9B56D3A82F894C60EF067C /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		11345C81116DC36BA7419B25 /* Scribe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Scribe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0D9B56D3A82F894C60EF067C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		11345C81116DC36BA7419B25 /* Scribe.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Scribe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		476A60E5A29A896B3B628E93 /* LandingSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingSupport.swift; sourceTree = "<group>"; };
+		4ED2E734490566000F0A1854 /* Caveat.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Caveat.ttf; sourceTree = "<group>"; };
 		572ACD849DC28AE0C35FCA9B /* ScribeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScribeApp.swift; sourceTree = "<group>"; };
+		B9C170F0EA4BE2F97F196EC5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		BDB34195BC271AA08CD75181 /* Caveat-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Caveat-OFL.txt"; sourceTree = "<group>"; };
+		C746A923AB93043D4A2EF9ED /* LandingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingView.swift; sourceTree = "<group>"; };
 		E66F58B9DD78240A1F23C206 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		1FD1258537B46F2F60114C61 /* Landing */ = {
+			isa = PBXGroup;
+			children = (
+				476A60E5A29A896B3B628E93 /* LandingSupport.swift */,
+				C746A923AB93043D4A2EF9ED /* LandingView.swift */,
+			);
+			path = Landing;
+			sourceTree = "<group>";
+		};
 		637CC253C48F5DA69FAD3A59 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -26,11 +46,24 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		80ECC09A60AB563DAA7AF65E /* Fonts */ = {
+			isa = PBXGroup;
+			children = (
+				BDB34195BC271AA08CD75181 /* Caveat-OFL.txt */,
+				4ED2E734490566000F0A1854 /* Caveat.ttf */,
+			);
+			path = Fonts;
+			sourceTree = "<group>";
+		};
 		CE0A276A257FD1674B6227E6 /* Scribe */ = {
 			isa = PBXGroup;
 			children = (
+				0D9B56D3A82F894C60EF067C /* Assets.xcassets */,
 				E66F58B9DD78240A1F23C206 /* ContentView.swift */,
+				B9C170F0EA4BE2F97F196EC5 /* Info.plist */,
 				572ACD849DC28AE0C35FCA9B /* ScribeApp.swift */,
+				80ECC09A60AB563DAA7AF65E /* Fonts */,
+				1FD1258537B46F2F60114C61 /* Landing */,
 			);
 			path = Scribe;
 			sourceTree = "<group>";
@@ -51,6 +84,7 @@
 			buildConfigurationList = 7AEB079BA819AB8DAB7D284C /* Build configuration list for PBXNativeTarget "Scribe" */;
 			buildPhases = (
 				A3C55BD5E9BF3DB4B77D78FC /* Sources */,
+				CB65F06A27CFA292E58C59C8 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -71,6 +105,12 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					33F14FC823B69894B58E6BB8 = {
+						DevelopmentTeam = 9Q39KHPLZH;
+						ProvisioningStyle = Automatic;
+					};
+				};
 			};
 			buildConfigurationList = 9E4712121E5F29BBE87574A2 /* Build configuration list for PBXProject "Scribe" */;
 			developmentRegion = en;
@@ -91,12 +131,27 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		CB65F06A27CFA292E58C59C8 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F6EB18EEAA041A038DFC5752 /* Assets.xcassets in Resources */,
+				0CA0129A11C9832DE88247C4 /* Caveat-OFL.txt in Resources */,
+				3F361F29058A0480D0BE6709 /* Caveat.ttf in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		A3C55BD5E9BF3DB4B77D78FC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				AEED381763459F5F54EC8408 /* ContentView.swift in Sources */,
+				9DD181BD50EBFDFE0C1C8FB4 /* LandingSupport.swift in Sources */,
+				3B685F1084467D6DDEEF120E /* LandingView.swift in Sources */,
 				C4457AFB46EBCC8F7A30D469 /* ScribeApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -109,9 +164,11 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 9Q39KHPLZH;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Scribe/Info.plist;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -251,9 +308,11 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 9Q39KHPLZH;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Scribe/Info.plist;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
