@@ -392,6 +392,23 @@ struct PagePill: View {
     }
 }
 
+/// Says which page just came on screen, then fades. Floats over the page; never takes a touch.
+struct PageChangeLabel: View {
+    let current: Int
+    let count: Int
+
+    var body: some View {
+        Text("Page \(current) of \(count)")
+            .font(.system(size: 15, weight: .semibold, design: .rounded))
+            .monospacedDigit()
+            .padding(.horizontal, 16)
+            .frame(height: 36)
+            .canvasChrome(Capsule(), interactive: false)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
 /// Past the last page: a fresh sheet of paper that becomes a real page when the swipe lands on it.
 struct NewPagePlaceholder: View {
     let background: PageBackground
@@ -400,8 +417,8 @@ struct NewPagePlaceholder: View {
     var body: some View {
         ZStack {
             Color.white
-            FadingPageBackground(style: background, size: size,
-                                 spacing: NotePageMetrics.backgroundSpacing * size.width / NotePageMetrics.width)
+            PageBackgroundView(style: background, regions: [CGRect(origin: .zero, size: size)],
+                               spacing: NotePageMetrics.backgroundSpacing * size.width / NotePageMetrics.width)
                 .opacity(0.6)
             VStack(spacing: 14) {
                 Image(systemName: "plus")

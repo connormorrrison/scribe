@@ -11,7 +11,8 @@ import UniformTypeIdentifiers
 ///
 /// Each cluster is a separate piece of Liquid Glass inside one container per edge (`ChromeGroup`).
 /// - The pages sit under them, one screen each, edge to edge: the dots mean "you can write here". Swipe between
-///   pages; swipe past the last one, or tap + by the page count, to add a page.
+///   pages, one at a time; a gray gutter shows between sheets mid-swipe, and "Page 3 of 5" shows briefly on
+///   landing. Swipe past the last page, or tap + by the page count, to add a page.
 struct CanvasView: View {
     @State private var model: CanvasModel
     let onBack: () -> Void
@@ -27,6 +28,7 @@ struct CanvasView: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var exportFile: PDFFile?
     @State private var shareURL: URL?
+    @State private var showsPageLabel = false
 
     init(store: CanvasStore, document: CanvasDocument, onBack: @escaping () -> Void) {
         _model = State(initialValue: CanvasModel(store: store, document: document))
@@ -45,9 +47,16 @@ struct CanvasView: View {
             VStack(spacing: 0) {
                 topEdge
                 Spacer(minLength: 0)
+                if showsPageLabel {
+                    PageChangeLabel(current: model.currentPageIndex + 1, count: model.content.pages.count)
+                        .padding(.bottom, 16)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
                 bottomEdge
             }
         }
+        .animation(.easeOut(duration: 0.25), value: showsPageLabel)
+        .task(id: model.currentPageID) { await flashPageLabel() }
         .background(Color.white.ignoresSafeArea())
         .animation(.snappy, value: model.banner)
         .animation(.snappy, value: model.placement != nil)
@@ -80,7 +89,7 @@ struct CanvasView: View {
     /// Pages side by side, one screen each. Swipe for the next; swipe past the last to add one.
     private func pages(size: CGSize) -> some View {
         ScrollView(.horizontal) {
-            LazyHStack(spacing: 0) {
+            LazyHStack(spacing: Self.pageGutter) {
                 ForEach(model.content.pages) { page in
                     ScrollView(.vertical) {
                         PageView(model: model, page: page, width: size.width, background: background,
@@ -98,8 +107,9 @@ struct CanvasView: View {
             }
             .scrollTargetLayout()
         }
-        .scrollTargetBehavior(.paging)
+        .scrollTargetBehavior(.viewAligned(limitBehavior: .alwaysByOne))
         .scrollIndicators(.hidden)
+        .background(Color(.systemGray5))
         .scrollPosition(id: pagePosition)
         // While a photo is being placed, a drag moves the photo.
         .scrollDisabled(model.placement != nil)
@@ -109,6 +119,9 @@ struct CanvasView: View {
         .onChange(of: model.content.pages.map(\.id)) { _, _ in fitPages(size) }
         .onChange(of: model.reloadToken) { _, _ in fitPages(size) }
     }
+
+    /// The desk between two sheets, seen only mid-swipe.
+    private static let pageGutter: CGFloat = 24
 
     /// Stands for the "new page" past the last page.
     private static let newPageID = UUID()
@@ -124,6 +137,19 @@ struct CanvasView: View {
                 model.currentPageID = id
             }
         }
+    }
+
+    /// Shows "Page 3 of 5" for a moment after landing on another page (not when the note opens).
+    @State private var labelledPageID: UUID?
+
+    private func flashPageLabel() async {
+        guard let id = model.currentPageID else { return }
+        defer { labelledPageID = id }
+        guard labelledPageID != nil, labelledPageID != id else { return }
+        showsPageLabel = true
+        try? await Task.sleep(for: .seconds(1.2))
+        guard !Task.isCancelled else { return }
+        showsPageLabel = false
     }
 
     private func addPageAfterCurrent() {

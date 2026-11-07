@@ -17,7 +17,8 @@ struct PageView: View {
 
         ZStack(alignment: .topLeading) {
             Color.white
-            FadingPageBackground(style: background, size: size, spacing: NotePageMetrics.backgroundSpacing * k)
+            PageBackgroundView(style: background, regions: [CGRect(origin: .zero, size: size)],
+                               spacing: NotePageMetrics.backgroundSpacing * k)
 
             ForEach(page.images) { placed in
                 if let image = model.image(named: placed.fileName) {
@@ -52,34 +53,6 @@ struct PageView: View {
         .frame(width: size.width, height: size.height)
         .clipped()
         .accessibilityElement(children: .contain)
-    }
-}
-
-/// The page's dots or grid, fading out toward every edge so the paper has no hard border.
-struct FadingPageBackground: View {
-    let style: PageBackground
-    let size: CGSize
-    let spacing: CGFloat
-    /// How far in from each edge the fade reaches, in screen points.
-    var fade: CGFloat = 72
-
-    var body: some View {
-        let x = min(0.45, fade / max(size.width, 1))
-        let y = min(0.45, fade / max(size.height, 1))
-        PageBackgroundView(style: style, regions: [CGRect(origin: .zero, size: size)], spacing: spacing)
-            .mask(LinearGradient(stops: Self.stops(x), startPoint: .leading, endPoint: .trailing))
-            .mask(LinearGradient(stops: Self.stops(y), startPoint: .top, endPoint: .bottom))
-            .frame(width: size.width, height: size.height)
-    }
-
-    /// Clear at both ends, solid in between, eased so the fade has no visible start.
-    private static func stops(_ edge: CGFloat) -> [Gradient.Stop] {
-        [.init(color: .clear, location: 0),
-         .init(color: .black.opacity(0.35), location: edge * 0.45),
-         .init(color: .black, location: edge),
-         .init(color: .black, location: 1 - edge),
-         .init(color: .black.opacity(0.35), location: 1 - edge * 0.45),
-         .init(color: .clear, location: 1)]
     }
 }
 

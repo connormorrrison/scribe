@@ -66,6 +66,7 @@ enum LibraryMetrics {
     /// Landscape US Letter proportions.
     static let thumbnailHeight: CGFloat = tileWidth * 8.5 / 11
     static let spacing: CGFloat = 28
+    static let cornerRadius: CGFloat = 16
 }
 
 /// The adaptive tile grid every library screen uses.
@@ -87,70 +88,110 @@ struct LibraryGrid<Content: View>: View {
     }
 }
 
-/// A note or PDF: a page thumbnail with its title and a caption underneath.
-struct DocumentTile: View {
-    let document: CanvasDocument
-    var caption: String? = nil
-    @Environment(CanvasStore.self) private var store: CanvasStore?
+/// Artwork with a centred name and a caption underneath, like a Finder icon. Folders and notes share it, so they
+/// line up.
+struct LibraryTile<Artwork: View>: View {
+    let title: String
+    let caption: String
+    @ViewBuilder var artwork: Artwork
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Group {
-                if document.kind == .pdf, let url = store?.fileURL(for: document) {
-                    PDFThumbnail(url: url)
-                } else {
-                    NotePaper()
-                }
-            }
-            .frame(width: LibraryMetrics.tileWidth, height: LibraryMetrics.thumbnailHeight)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.black.opacity(0.08))
-            }
-            .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
+        VStack(spacing: 10) {
+            artwork
+                .frame(width: LibraryMetrics.tileWidth, height: LibraryMetrics.thumbnailHeight)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(document.title)
+            VStack(spacing: 2) {
+                Text(title)
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .lineLimit(1)
-                Text(caption ?? document.modifiedAt.formatted(date: .abbreviated, time: .omitted))
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                Text(caption)
                     .font(.system(size: 13, weight: .regular, design: .rounded))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
-        .frame(width: LibraryMetrics.tileWidth, alignment: .leading)
-        .contentShape(Rectangle())
+        .frame(width: LibraryMetrics.tileWidth)
+        .padding(.vertical, 4)
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .hoverEffect(.highlight)
     }
 }
 
-/// A folder: a tinted folder in the same box as a page thumbnail, with its name and note count.
+/// A note or PDF: its page thumbnail.
+struct DocumentTile: View {
+    let document: CanvasDocument
+    var caption: String? = nil
+
+    var body: some View {
+        LibraryTile(title: document.title,
+                    caption: caption ?? document.modifiedAt.formatted(date: .abbreviated, time: .omitted)) {
+            let shape = RoundedRectangle(cornerRadius: LibraryMetrics.cornerRadius, style: .continuous)
+            DocumentArtwork(document: document)
+                .clipShape(shape)
+                .overlay(shape.strokeBorder(.black.opacity(0.08), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.1), radius: 8, y: 3)
+        }
+    }
+}
+
+/// A folder, like a Home Screen folder but landscape: a tinted tile holding small previews of its first four
+/// notes. Every folder is the same neutral gray.
 struct FolderTile: View {
     let folder: CanvasFolder
     let documents: [CanvasDocument]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.accentColor.opacity(0.08))
-                .overlay {
-                    Image(systemName: "folder.fill")
-                        .font(.system(size: 64))
-                        .foregroundStyle(Color.accentColor.gradient)
-                }
-                .frame(width: LibraryMetrics.tileWidth, height: LibraryMetrics.thumbnailHeight)
+        LibraryTile(title: folder.name, caption: documents.count == 1 ? "1 item" : "\(documents.count) items") {
+            FolderArtwork(documents: documents)
+        }
+    }
+}
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(folder.name)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .lineLimit(1)
-                Text(documents.count == 1 ? "1 item" : "\(documents.count) items")
-                    .font(.system(size: 13, weight: .regular, design: .rounded))
-                    .foregroundStyle(.secondary)
+struct FolderArtwork: View {
+    let documents: [CanvasDocument]
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: LibraryMetrics.cornerRadius, style: .continuous)
+        let previews = Array(documents.prefix(4))
+        let cell = RoundedRectangle(cornerRadius: 6, style: .continuous)
+
+        Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+            ForEach(0..<2, id: \.self) { row in
+                GridRow {
+                    ForEach(0..<2, id: \.self) { column in
+                        let index = row * 2 + column
+                        if index < previews.count {
+                            DocumentArtwork(document: previews[index])
+                                .clipShape(cell)
+                                .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+                        } else {
+                            cell.fill(Color.primary.opacity(0.04))
+                        }
+                    }
+                }
             }
         }
-        .frame(width: LibraryMetrics.tileWidth, alignment: .leading)
-        .contentShape(Rectangle())
+        .padding(12)
+        // Content, so a plain neutral fill rather than glass (DESIGN.md). Adapts to dark mode.
+        .background(Color(.tertiarySystemFill), in: shape)
+        .overlay(shape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .accessibilityHidden(true)
+    }
+}
+
+/// What a note or PDF looks like, filling whatever frame it gets: the top of a PDF's first page, or blank paper.
+struct DocumentArtwork: View {
+    let document: CanvasDocument
+    @Environment(CanvasStore.self) private var store: CanvasStore?
+
+    var body: some View {
+        if document.kind == .pdf, let url = store?.fileURL(for: document) {
+            PDFThumbnail(url: url)
+        } else {
+            NotePaper()
+        }
     }
 }
 
@@ -160,36 +201,40 @@ struct NotePaper: View {
 
     var body: some View {
         GeometryReader { geo in
-            PageBackgroundView(style: background, regions: [CGRect(origin: .zero, size: geo.size)], spacing: 12)
+            PageBackgroundView(style: background, regions: [CGRect(origin: .zero, size: geo.size)],
+                               spacing: max(6, geo.size.width / 16))
         }
         .background(.white)
     }
 }
 
-/// The first page of a PDF, rendered off the main thread.
+/// The first page of a PDF, rendered off the main thread. Fills its frame, showing the top of the page.
 struct PDFThumbnail: View {
     let url: URL
     @State private var image: UIImage?
 
     var body: some View {
-        ZStack {
-            Color.white
-            if let image {
-                // Fills the landscape tile, showing the top of the page.
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: LibraryMetrics.tileWidth, height: LibraryMetrics.thumbnailHeight, alignment: .top)
-            } else {
-                Image(systemName: "doc.richtext").font(.system(size: 40)).foregroundStyle(.tertiary)
+        Color.white
+            .overlay(alignment: .top) {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFill()
+                        .transition(.opacity)
+                } else {
+                    Image(systemName: "doc.richtext").font(.system(size: 28)).foregroundStyle(.tertiary)
+                        .frame(maxHeight: .infinity)
+                }
             }
-        }
-        .task(id: url) {
-            let size = CGSize(width: LibraryMetrics.tileWidth * 2, height: LibraryMetrics.tileWidth * 4)
-            image = await Task.detached(priority: .utility) {
-                PDFDocument(url: url)?.page(at: 0)?.thumbnail(of: size, for: .mediaBox)
-            }.value
-        }
+            .clipped()
+            .task(id: url) {
+                let size = CGSize(width: LibraryMetrics.tileWidth * 2, height: LibraryMetrics.tileWidth * 4)
+                let loaded = await Task.detached(priority: .utility) {
+                    PDFDocument(url: url)?.page(at: 0)?.thumbnail(of: size, for: .mediaBox)
+                }.value
+                withAnimation(.easeOut(duration: 0.15)) { image = loaded }
+            }
     }
 }
 
