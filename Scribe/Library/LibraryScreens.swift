@@ -108,7 +108,7 @@ struct TrashView: View {
                     .font(.system(size: 15, weight: .regular, design: .rounded))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, LibraryMetrics.spacing)
+                    .padding(.horizontal, LibraryMetrics.margin)
                     .padding(.top, 8)
                 LibraryGrid {
                     ForEach(trash) { doc in
@@ -154,16 +154,11 @@ struct DocumentView: View {
     var body: some View {
         Group {
             if let document = store.document(documentID) {
-                if document.kind == .pdf, let url = store.fileURL(for: document) {
-                    PDFKitView(url: url)
-                        .ignoresSafeArea(edges: .bottom)
-                        .roundedTitle(document.title, inline: true)
-                } else {
-                    CanvasView(store: store, document: document) {
-                        if let onBack { onBack() } else { dismiss() }
-                    }
-                    .toolbar(.hidden, for: .navigationBar)
+                // Notes and imported PDFs open the same way: a PDF is a note with its pages as paper.
+                CanvasView(store: store, document: document) {
+                    if let onBack { onBack() } else { dismiss() }
                 }
+                .toolbar(.hidden, for: .navigationBar)
             } else {
                 ContentUnavailableView("Note Not Found", systemImage: "doc.questionmark")
             }

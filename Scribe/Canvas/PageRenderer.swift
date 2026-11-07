@@ -10,13 +10,22 @@ struct PageSnapshot: View {
     let page: NotePage
     let background: PageBackground
     let image: (String) -> UIImage?
+    /// A PDF page's paper, for a page of an imported PDF.
+    var pdfImage: (Int) -> UIImage? = { _ in nil }
     /// Pixels per page point, for the ink images.
     let inkScale: CGFloat
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.white
-            PageBackgroundView(style: background, regions: [page.bounds], spacing: NotePageMetrics.backgroundSpacing)
+            if let index = page.pdfPage {
+                if let paper = pdfImage(index) {
+                    Image(uiImage: paper).resizable().frame(width: page.bounds.width, height: page.bounds.height)
+                }
+            } else {
+                PageBackgroundView(style: background, regions: [page.bounds],
+                                   spacing: NotePageMetrics.backgroundSpacing)
+            }
 
             ForEach(page.images) { placed in
                 if let picture = image(placed.fileName) {
@@ -42,11 +51,14 @@ struct PageSnapshot: View {
 @MainActor
 enum PageRenderer {
     /// The page as an image `pixelWidth` pixels wide.
-    static func image(of page: NotePage, background: PageBackground, pixelWidth: CGFloat,
+    static func image(of page: NotePage, background: PageBackground, pixelWidth: CGFloat, pdf: URL? = nil,
                       image: @escaping (String) -> UIImage?) -> UIImage? {
         let scale = pixelWidth / NotePageMetrics.width
+        let paper: UIImage? = page.pdfPage.flatMap { index in
+            pdf.flatMap { PDFPageImages.shared.imageNow(url: $0, page: index, pixelWidth: pixelWidth) }
+        }
         let renderer = ImageRenderer(content: PageSnapshot(page: page, background: background, image: image,
-                                                           inkScale: scale))
+                                                           pdfImage: { _ in paper }, inkScale: scale))
         renderer.scale = scale
         renderer.isOpaque = true
         return renderer.uiImage
@@ -78,7 +90,8 @@ final class NoteThumbnails {
         versions[documentID, default: 0] += 1
     }
 
-    func thumbnail(for documentID: UUID, directory: URL?, defaultBackground: PageBackground) -> Thumbnail? {
+    func thumbnail(for documentID: UUID, directory: URL?, pdf: URL? = nil,
+                   defaultBackground: PageBackground) -> Thumbnail? {
         let file = NoteFile(directory: directory)
         let saved = file.contentURL.flatMap {
             (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date
@@ -86,7 +99,7 @@ final class NoteThumbnails {
         let key = "\(saved?.timeIntervalSince1970 ?? 0)-\(defaultBackground.rawValue)"
         if let hit = cache[documentID], hit.key == key { return hit.thumbnail }
 
-        let content = file.load()
+        let content = file.load(pdf: pdf)
         guard let page = content.pages.first else { return nil }
         var images: [String: UIImage] = [:]
         for placed in page.images {
@@ -95,7 +108,7 @@ final class NoteThumbnails {
             }
         }
         let rendered = PageRenderer.image(of: page, background: content.background ?? defaultBackground,
-                                          pixelWidth: Self.pixelWidth) { images[$0] }
+                                          pixelWidth: Self.pixelWidth, pdf: pdf) { images[$0] }
         guard let rendered else { return nil }
         let thumbnail = Thumbnail(image: rendered, showsWholePage: Self.contentBottom(page) > Self.topCropHeight)
         cache[documentID] = (key, thumbnail)
@@ -116,8 +129,8 @@ final class NoteThumbnails {
     }
 }
 
-/// A note's first page in a library tile: the top of the page filling the frame, or the whole page fitted inside it
-/// when something on it sits lower than the top would show.
+/// A note's first page in a library tile: the top of the page filling the frame, or the whole page on gray bars (a
+/// PDF, or a note with something lower than the top would show).
 struct NoteThumbnail: View {
     let document: CanvasDocument
     @Environment(CanvasStore.self) private var store: CanvasStore?
@@ -126,15 +139,19 @@ struct NoteThumbnail: View {
 
     var body: some View {
         let version = NoteThumbnails.shared.versions[document.id] ?? 0
-        Color.white
+        // A PDF always shows its whole first page, like the page on the desk when it opens; so does a note with
+        // something low on the page. The bars at the sides are the desk.
+        let wholePage = document.kind == .pdf || thumbnail?.showsWholePage == true
+        (wholePage ? Color(.systemGray5) : Color.white)
             .overlay(alignment: .top) {
                 if let thumbnail {
                     Image(uiImage: thumbnail.image)
                         .resizable()
                         .interpolation(.high)
-                        .aspectRatio(contentMode: thumbnail.showsWholePage ? .fit : .fill)
-                        .frame(maxHeight: thumbnail.showsWholePage ? .infinity : nil)
-                } else {
+                        .aspectRatio(contentMode: wholePage ? .fit : .fill)
+                        .frame(maxHeight: wholePage ? .infinity : nil)
+                        .shadow(color: .black.opacity(wholePage ? 0.12 : 0), radius: 1, y: 0.5)
+                } else if document.kind != .pdf {
                     NotePaper()
                 }
             }
@@ -142,6 +159,8 @@ struct NoteThumbnail: View {
             .task(id: "\(document.id)-\(version)-\(background.rawValue)") {
                 thumbnail = NoteThumbnails.shared.thumbnail(for: document.id,
                                                             directory: store?.noteDirectory(for: document.id),
+                                                            pdf: document.kind == .pdf
+                                                                ? store?.fileURL(for: document) : nil,
                                                             defaultBackground: background)
             }
     }

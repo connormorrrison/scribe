@@ -66,6 +66,8 @@ enum LibraryMetrics {
     /// Landscape US Letter proportions.
     static let thumbnailHeight: CGFloat = tileWidth * 8.5 / 11
     static let spacing: CGFloat = 28
+    /// Space at the left and right of every library screen.
+    static let margin: CGFloat = 56
     static let cornerRadius: CGFloat = 16
 }
 
@@ -83,7 +85,7 @@ struct LibraryGrid<Content: View>: View {
                   spacing: LibraryMetrics.spacing + 4) {
             content
         }
-        .padding(.horizontal, LibraryMetrics.spacing)
+        .padding(.horizontal, LibraryMetrics.margin)
         .padding(.vertical, 20)
     }
 }
@@ -184,14 +186,10 @@ struct FolderArtwork: View {
 /// What a note or PDF looks like, filling whatever frame it gets: the top of its first page.
 struct DocumentArtwork: View {
     let document: CanvasDocument
-    @Environment(CanvasStore.self) private var store: CanvasStore?
 
     var body: some View {
-        if document.kind == .pdf, let url = store?.fileURL(for: document) {
-            PDFThumbnail(url: url)
-        } else {
-            NoteThumbnail(document: document)
-        }
+        // A PDF's tile shows its markup too.
+        NoteThumbnail(document: document)
     }
 }
 
@@ -205,36 +203,6 @@ struct NotePaper: View {
                                spacing: max(6, geo.size.width / 16))
         }
         .background(.white)
-    }
-}
-
-/// The first page of a PDF, rendered off the main thread. Fills its frame, showing the top of the page.
-struct PDFThumbnail: View {
-    let url: URL
-    @State private var image: UIImage?
-
-    var body: some View {
-        Color.white
-            .overlay(alignment: .top) {
-                if let image {
-                    Image(uiImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFill()
-                        .transition(.opacity)
-                } else {
-                    Image(systemName: "doc.richtext").font(.system(size: 28)).foregroundStyle(.tertiary)
-                        .frame(maxHeight: .infinity)
-                }
-            }
-            .clipped()
-            .task(id: url) {
-                let size = CGSize(width: LibraryMetrics.tileWidth * 2, height: LibraryMetrics.tileWidth * 4)
-                let loaded = await Task.detached(priority: .utility) {
-                    PDFDocument(url: url)?.page(at: 0)?.thumbnail(of: size, for: .mediaBox)
-                }.value
-                withAnimation(.easeOut(duration: 0.15)) { image = loaded }
-            }
     }
 }
 
@@ -287,7 +255,7 @@ struct LibraryHeader: View {
             .font(.system(size: 34, weight: .semibold, design: .rounded))
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, LibraryMetrics.spacing)
+            .padding(.horizontal, LibraryMetrics.margin)
             .padding(.top, 4)
             .accessibilityAddTraits(.isHeader)
     }
@@ -562,18 +530,3 @@ private struct LibraryPrompts: ViewModifier {
 
 // MARK: - PDF viewer
 
-struct PDFKitView: UIViewRepresentable {
-    let url: URL
-
-    func makeUIView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        view.backgroundColor = .secondarySystemBackground
-        view.document = PDFDocument(url: url)
-        return view
-    }
-
-    func updateUIView(_ view: PDFView, context: Context) {
-        if view.document?.documentURL != url { view.document = PDFDocument(url: url) }
-    }
-}

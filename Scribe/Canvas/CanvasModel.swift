@@ -61,6 +61,8 @@ final class CanvasModel {
     private(set) var content: NoteContent
     let document: CanvasDocument
     @ObservationIgnored private let file: NoteFile
+    /// The imported PDF this note marks up, if it is one. Never changed.
+    let pdfURL: URL?
     @ObservationIgnored private let store: CanvasStore
 
     // MARK: Pages
@@ -85,6 +87,8 @@ final class CanvasModel {
     var agent = AgentState.idle
     var banner: CanvasBanner?
     var selectedImage: ImageSelection?
+    /// The page on screen is zoomed in, so drags pan it instead of turning the page.
+    var pageZoomed = false
     var showsKeyboard = false
     var enlargedCard: AgentCard?
     private(set) var clocks: [UUID: AnimationClock] = [:]
@@ -106,7 +110,9 @@ final class CanvasModel {
         self.store = store
         self.document = document
         let file = NoteFile(directory: store.noteDirectory(for: document.id))
-        let content = file.load()
+        let pdfURL = document.kind == .pdf ? store.fileURL(for: document) : nil
+        let content = file.load(pdf: pdfURL)
+        self.pdfURL = pdfURL
         self.file = file
         self.content = content
         currentPageID = content.pages.first?.id
@@ -261,12 +267,12 @@ final class CanvasModel {
     /// A page's height in page points when it exactly fills the screen. New pages are made this size.
     private(set) var screenPageHeight = NotePageMetrics.height
 
-    /// Sizes pages to the screen: a blank page fits it exactly, a page with something on it only ever grows (so
+    /// Sizes pages to the screen (a PDF page keeps its own shape): a blank page fits it exactly, a page with something on it only ever grows (so
     /// nothing is cut off, and a page written in portrait scrolls in landscape). Not an undo step.
     func fitPages(toHeight height: CGFloat) {
         screenPageHeight = height
         var changed = false
-        for i in content.pages.indices {
+        for i in content.pages.indices where content.pages[i].pdfPage == nil {
             let page = content.pages[i]
             let blank = !pageHasContent(page.id)
             guard blank ? abs(page.height - height) > 0.5 : page.height < height else { continue }

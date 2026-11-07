@@ -104,15 +104,9 @@ struct CanvasView: View {
         ScrollView(.horizontal) {
             LazyHStack(spacing: Self.pageGutter) {
                 ForEach(model.content.pages) { page in
-                    ScrollView(.vertical) {
-                        PageView(model: model, page: page, width: size.width, background: background,
-                                 drawWithFinger: drawWithFinger)
-                    }
-                    // Only a page written in another orientation is taller than the screen, and only then scrolls.
-                    .scrollBounceBehavior(.basedOnSize)
-                    .scrollIndicators(.hidden)
-                    .frame(width: size.width, height: size.height)
-                    .id(page.id)
+                    pageView(page, size: size)
+                        .frame(width: size.width, height: size.height)
+                        .id(page.id)
                 }
 
                 NewPagePlaceholder(background: background, size: size)
@@ -125,13 +119,30 @@ struct CanvasView: View {
         .background(Color(.systemGray5))
         .scrollPosition(id: pagePosition)
         // While a photo is being placed, a drag moves the photo.
-        // While an image is selected, a drag moves the image, not the page.
-        .scrollDisabled(model.selectedImage != nil)
+        // While an image is selected, a drag moves the image; while a page is zoomed, a drag pans it.
+        .scrollDisabled(model.selectedImage != nil || model.pageZoomed)
         .scrollDismissesKeyboard(.interactively)
         .onAppear { fitPages(size) }
         .onChange(of: size) { _, new in fitPages(new) }
         .onChange(of: model.content.pages.map(\.id)) { _, _ in fitPages(size) }
         .onChange(of: model.reloadToken) { _, _ in fitPages(size) }
+    }
+
+    /// A blank page is paper edge to edge. A PDF page keeps its shape and is shown whole on the desk, and zooms.
+    @ViewBuilder
+    private func pageView(_ page: NotePage, size: CGSize) -> some View {
+        if page.pdfPage != nil {
+            ZoomablePDFPage(model: model, page: page, size: size, background: background,
+                            drawWithFinger: drawWithFinger)
+        } else {
+            ScrollView(.vertical) {
+                PageView(model: model, page: page, width: size.width, background: background,
+                         drawWithFinger: drawWithFinger)
+            }
+            // Only a page written in another orientation is taller than the screen, and only then scrolls.
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollIndicators(.hidden)
+        }
     }
 
     /// The desk between two sheets, seen only mid-swipe.

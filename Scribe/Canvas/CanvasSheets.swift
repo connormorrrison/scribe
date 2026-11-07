@@ -218,7 +218,8 @@ struct PageThumbnail: View {
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
             .task(id: Snapshot(page: page, background: background)) {
-                image = PageRenderer.image(of: page, background: background, pixelWidth: 200 * displayScale) {
+                image = PageRenderer.image(of: page, background: background, pixelWidth: 200 * displayScale,
+                                           pdf: model.pdfURL) {
                     model.image(named: $0)
                 }
             }
@@ -405,11 +406,17 @@ enum NotePDF {
                 UIColor.white.setFill()
                 UIRectFill(rect)
 
-                let paper = ImageRenderer(content:
-                    PageBackgroundView(style: background, regions: [rect], spacing: NotePageMetrics.backgroundSpacing)
-                        .frame(width: rect.width, height: rect.height))
-                paper.scale = 2
-                paper.uiImage?.draw(in: rect)
+                if let index = page.pdfPage, let url = model.pdfURL {
+                    // The PDF page itself, as vectors, so text stays sharp.
+                    PDFPages.draw(url: url, page: index, in: rect, context: context.cgContext)
+                } else {
+                    let paper = ImageRenderer(content:
+                        PageBackgroundView(style: background, regions: [rect],
+                                           spacing: NotePageMetrics.backgroundSpacing)
+                            .frame(width: rect.width, height: rect.height))
+                    paper.scale = 2
+                    paper.uiImage?.draw(in: rect)
+                }
 
                 for placed in page.images {
                     guard let image = model.image(named: placed.fileName) else { continue }

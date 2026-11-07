@@ -1,7 +1,7 @@
 import PencilKit
 import SwiftUI
 
-/// One page, edge to edge: paper and background, photos, the agent's ink, the person's ink, the agent's cards, and a photo being
+/// One page, edge to edge: paper and background (or a PDF page), photos, the agent's ink, the person's ink, the agent's cards, and a photo being
 /// placed. Everything is laid out in page points and scaled by `width / NotePageMetrics.width`.
 struct PageView: View {
     let model: CanvasModel
@@ -9,6 +9,8 @@ struct PageView: View {
     let width: CGFloat
     let background: PageBackground
     let drawWithFinger: Bool
+    /// Pinch and double-tap on the page, for a page that zooms.
+    var zoom: PageZoomGestures? = nil
 
     private var k: CGFloat { width / NotePageMetrics.width }
 
@@ -17,8 +19,13 @@ struct PageView: View {
 
         ZStack(alignment: .topLeading) {
             Color.white
-            PageBackgroundView(style: background, regions: [CGRect(origin: .zero, size: size)],
-                               spacing: NotePageMetrics.backgroundSpacing * k)
+            if let index = page.pdfPage, let url = model.pdfURL {
+                PDFPageView(url: url, page: index, width: size.width)
+                    .frame(width: size.width, height: size.height)
+            } else {
+                PageBackgroundView(style: background, regions: [CGRect(origin: .zero, size: size)],
+                                   spacing: NotePageMetrics.backgroundSpacing * k)
+            }
 
             ForEach(page.images) { placed in
                 if let image = model.image(named: placed.fileName) {
@@ -35,7 +42,7 @@ struct PageView: View {
             }
 
             InkCanvas(model: model, pageID: page.id, scale: k, pageHeight: page.height, drawWithFinger: drawWithFinger,
-                      reloadToken: model.reloadToken)
+                      reloadToken: model.reloadToken, zoom: zoom)
                 .frame(width: size.width, height: size.height)
 
             ForEach(page.cards) { card in
@@ -55,6 +62,15 @@ struct PageView: View {
         .clipped()
         .accessibilityElement(children: .contain)
     }
+}
+
+/// What a zooming page does with a pinch or double-tap on its paper. Points are in the page view's own (unscaled)
+/// coordinates.
+struct PageZoomGestures {
+    var began: (CGPoint) -> Void
+    var changed: (CGFloat) -> Void
+    var ended: (CGFloat) -> Void
+    var doubleTapped: (CGPoint) -> Void
 }
 
 /// A placed image, rotated about its centre. `scale` is screen points per page point.
@@ -111,6 +127,7 @@ struct InkCanvas: UIViewRepresentable {
     let drawWithFinger: Bool
     /// Passed in (rather than only read from the model) so undo always updates the canvas.
     let reloadToken: Int
+    var zoom: PageZoomGestures?
 
     func makeCoordinator() -> Coordinator { Coordinator(model: model, pageID: pageID) }
 
@@ -131,6 +148,18 @@ struct InkCanvas: UIViewRepresentable {
         tap.cancelsTouchesInView = false
         tap.delegate = context.coordinator
         canvas.addGestureRecognizer(tap)
+        // Pinch and double-tap to zoom (pages that zoom pass `zoom`). Fingers only; the Pencil always draws.
+        let pinch = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.pinched(_:)))
+        pinch.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        pinch.delegate = context.coordinator
+        canvas.addGestureRecognizer(pinch)
+        let doubleTap = UITapGestureRecognizer(target: context.coordinator,
+                                               action: #selector(Coordinator.doubleTapped(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        doubleTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        doubleTap.cancelsTouchesInView = false
+        doubleTap.delegate = context.coordinator
+        canvas.addGestureRecognizer(doubleTap)
         return canvas
     }
 
@@ -139,6 +168,7 @@ struct InkCanvas: UIViewRepresentable {
         coordinator.model = model
         coordinator.pageID = pageID
         coordinator.scale = scale
+        coordinator.zoom = zoom
 
         if canvas.minimumZoomScale != scale || canvas.zoomScale != scale {
             canvas.minimumZoomScale = scale
@@ -160,6 +190,7 @@ struct InkCanvas: UIViewRepresentable {
         var pageID: UUID
         var token = -1
         var scale: CGFloat = 1
+        var zoom: PageZoomGestures?
         private var loading = false
         /// What `load` last put on the canvas, until the person changes it. PencilKit can report a drawing it was
         /// just given as a change; that echo isn't an edit.
@@ -186,6 +217,22 @@ struct InkCanvas: UIViewRepresentable {
             guard let view = tap.view, scale > 0 else { return }
             let point = tap.location(in: view)
             model.tapPage(pageID, at: CGPoint(x: point.x / scale, y: point.y / scale))
+        }
+
+        @MainActor @objc func pinched(_ pinch: UIPinchGestureRecognizer) {
+            guard let zoom, let view = pinch.view else { return }
+            switch pinch.state {
+            case .began: zoom.began(pinch.location(in: view))
+            case .changed: zoom.changed(pinch.scale)
+            case .ended: zoom.ended(pinch.scale)
+            case .cancelled, .failed: zoom.ended(1)
+            default: break
+            }
+        }
+
+        @MainActor @objc func doubleTapped(_ tap: UITapGestureRecognizer) {
+            guard let zoom, let view = tap.view else { return }
+            zoom.doubleTapped(tap.location(in: view))
         }
 
         /// The tap works alongside drawing (with finger drawing on, a tap is also a dot of ink).

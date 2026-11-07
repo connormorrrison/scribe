@@ -86,6 +86,8 @@ struct NotePage: Identifiable, Codable, Equatable {
     var agentDrawing = PKDrawing()
     var images: [PlacedImage] = []
     var cards: [AgentCard] = []
+    /// For a page of an imported PDF: which PDF page is its paper (`PDFPages`). nil for a blank page.
+    var pdfPage: Int?
 
     var bounds: CGRect { CGRect(x: 0, y: 0, width: NotePageMetrics.width, height: height) }
 
@@ -125,10 +127,17 @@ struct NoteFile {
 
     var contentURL: URL? { directory?.appendingPathComponent("note.json") }
 
-    func load() -> NoteContent {
+    /// What's saved; for an imported PDF that's never been opened, one page per PDF page.
+    func load(pdf: URL? = nil) -> NoteContent {
         guard let url = contentURL, let data = try? Data(contentsOf: url),
               let content = try? JSONDecoder().decode(NoteContent.self, from: data),
-              !content.pages.isEmpty else { return NoteContent() }
+              !content.pages.isEmpty else {
+            if let pdf {
+                let pages = PDFPages.notePages(from: pdf)
+                if !pages.isEmpty { return NoteContent(pages: pages) }
+            }
+            return NoteContent()
+        }
         return content
     }
 
