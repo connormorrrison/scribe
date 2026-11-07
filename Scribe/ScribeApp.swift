@@ -2,21 +2,30 @@ import SwiftUI
 
 @main
 struct ScribeApp: App {
-    /// The landing shows on every cold launch, until the user swipes up.
-    @State private var showLanding = true
+    @State private var store = CanvasStore()
+    /// The landing shows on launch (unless turned off in Settings), until the user swipes up.
+    @State private var showLanding: Bool
     /// Turns true as the landing starts sliding away, so the content pops in underneath it.
-    @State private var revealed = false
+    @State private var revealed: Bool
+
+    init() {
+        let intro = UserDefaults.standard.object(forKey: AppSettings.showIntro) as? Bool ?? true
+        _showLanding = State(initialValue: intro)
+        _revealed = State(initialValue: !intro)
+
+    }
 
     var body: some Scene {
         WindowGroup {
             ZStack {
-                ContentView(isRevealed: revealed)
+                ContentView(store: store, isRevealed: revealed)
                 if showLanding {
                     // The landing slides itself away, then is removed.
                     LandingView(onLeave: { revealed = true }, onContinue: { showLanding = false })
                         .zIndex(1)
                 }
             }
+            .fontDesign(.rounded)
         }
     }
 }
