@@ -35,7 +35,8 @@ struct PageView: View {
                     .allowsHitTesting(false)
             }
 
-            InkCanvas(model: model, pageID: page.id, scale: k, pageHeight: page.height, drawWithFinger: drawWithFinger)
+            InkCanvas(model: model, pageID: page.id, scale: k, pageHeight: page.height, drawWithFinger: drawWithFinger,
+                      reloadToken: model.reloadToken)
                 .frame(width: size.width, height: size.height)
                 // While a photo is being placed, the page is for positioning it.
                 .allowsHitTesting(model.placement == nil)
@@ -92,6 +93,8 @@ struct InkCanvas: UIViewRepresentable {
     let scale: CGFloat
     let pageHeight: CGFloat
     let drawWithFinger: Bool
+    /// Passed in (rather than only read from the model) so undo always updates the canvas.
+    let reloadToken: Int
 
     func makeCoordinator() -> Coordinator { Coordinator(model: model, pageID: pageID) }
 
@@ -126,7 +129,7 @@ struct InkCanvas: UIViewRepresentable {
         canvas.tool = model.palette.pencilKitTool
         canvas.drawingPolicy = drawWithFinger ? .anyInput : .pencilOnly
 
-        if coordinator.token != model.reloadToken { coordinator.load(into: canvas) }
+        if coordinator.token != reloadToken { coordinator.load(into: canvas) }
     }
 
     final class Coordinator: NSObject, PKCanvasViewDelegate {
@@ -134,23 +137,36 @@ struct InkCanvas: UIViewRepresentable {
         var pageID: UUID
         var token = -1
         private var loading = false
+        /// What `load` last put on the canvas, until the person changes it. PencilKit can report a drawing it was
+        /// just given as a change; that echo isn't an edit.
+        private var loaded: PKDrawing?
 
         init(model: CanvasModel, pageID: UUID) {
             self.model = model
             self.pageID = pageID
         }
 
+        /// Puts the model's ink on the canvas. Always as a new drawing: a `PKDrawing` keeps its identity across
+        /// edits, and given an older version of the drawing it's showing (after an undo), PencilKit merges the newer
+        /// strokes back in on the next stroke, bringing undone ink back.
         @MainActor func load(into canvas: PKCanvasView) {
             loading = true
-            canvas.drawing = model.page(pageID)?.drawing ?? PKDrawing()
+            let fresh = PKDrawing(strokes: model.page(pageID)?.drawing.strokes ?? [])
+            canvas.drawing = fresh
+            loaded = fresh
             token = model.reloadToken
             loading = false
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             guard !loading else { return }
+            let drawing = canvasView.drawing
+            if let loaded {
+                if drawing.strokes.count == loaded.strokes.count, drawing.bounds == loaded.bounds { return }
+                self.loaded = nil
+            }
             MainActor.assumeIsolated {
-                model.canvasChanged(page: pageID, drawing: canvasView.drawing)
+                model.canvasChanged(page: pageID, drawing: drawing)
                 token = model.reloadToken
             }
         }
