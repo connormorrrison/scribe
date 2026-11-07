@@ -15,7 +15,9 @@ case "$1" in
       echo "Anthropic: HTTP $code: $(echo "$json" | jq -r '.error.message // .')"; exit 1
     fi ;;
   elevenlabs)
-    code=$(curl -s -o /dev/null -w '%{http_code}' https://api.elevenlabs.io/v1/models -H "xi-api-key: $key")
-    [ "$code" = 200 ] && echo "ElevenLabs: OK." || { echo "ElevenLabs: HTTP $code"; exit 1; } ;;
+    body=$(curl -s -w '\n%{http_code}' https://api.elevenlabs.io/v1/models -H "xi-api-key: $key")
+    code=$(echo "$body" | tail -n1); json=$(echo "$body" | sed '$d')
+    if [ "$code" = 200 ]; then echo "ElevenLabs: OK."
+    else echo "ElevenLabs: HTTP $code: $(echo "$json" | jq -r '.detail | "\(.status // "") \(.message // "")"' 2>/dev/null || echo "$json")"; exit 1; fi ;;
   *) echo "Usage: $0 anthropic|elevenlabs"; exit 1 ;;
 esac

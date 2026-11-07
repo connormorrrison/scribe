@@ -107,13 +107,25 @@ enum ConnectionTester {
     }
 
     private static func testElevenLabs(key: String) async -> ConnectionStatus {
+        struct Envelope: Decodable {
+            struct Detail: Decodable { let status: String?; let message: String? }
+            let detail: Detail?
+        }
         do {
-            let (_, response) = try await URLSession.shared.data(for: ModelService.voiceTestRequest(key: key))
-            switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
-            case 200..<300: return .connected
-            case 400, 401, 403: return .failed("ElevenLabs rejected this key.")
-            case 429: return .failed("The key works, but ElevenLabs is rate-limiting it right now.")
-            case let code: return .failed("ElevenLabs returned an error (\(code)).")
+            let (data, response) = try await URLSession.shared.data(for: ModelService.voiceTestRequest(key: key))
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if (200..<300).contains(code) { return .connected }
+            let detail = (try? JSONDecoder().decode(Envelope.self, from: data))?.detail
+            switch (code, detail?.status) {
+            case (_, "invalid_api_key"):
+                return .failed("ElevenLabs doesn't recognise this key. Check it was copied in full.")
+            case (_, "missing_permissions"):
+                // The key is real but restricted; say which permission it lacks.
+                return .failed("The key is valid but restricted: \(detail?.message ?? "it's missing a permission").")
+            case (429, _):
+                return .failed("The key works, but ElevenLabs is rate-limiting it right now.")
+            default:
+                return .failed("ElevenLabs (\(code)): \(detail?.message ?? "unknown error").")
             }
         } catch {
             return .failed(error.localizedDescription)
