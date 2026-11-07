@@ -1,34 +1,6 @@
 import PencilKit
 import SwiftUI
 
-enum CanvasTool: String, CaseIterable, Identifiable {
-    case pen, highlighter, eraser, lasso
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .pen: "Pen"
-        case .highlighter: "Highlighter"
-        case .eraser: "Eraser"
-        case .lasso: "Lasso"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .pen: "pencil"
-        case .highlighter: "highlighter"
-        case .eraser: "eraser"
-        case .lasso: "lasso"
-        }
-    }
-}
-
-enum EraserMode: String {
-    case stroke, pixel
-}
-
 /// What the agent is doing, shown by the agent control.
 enum AgentState: Equatable {
     case idle, listening, thinking
@@ -86,23 +58,7 @@ final class CanvasModel {
 
     // MARK: Tools
 
-    var tool = CanvasTool.pen
-    var eraserMode = EraserMode.stroke
-    private(set) var swatches: [String]
-    var selectedSwatch = 0
-
-    var inkColor: UIColor {
-        UIColor(hex: swatches.indices.contains(selectedSwatch) ? swatches[selectedSwatch] : "#1C1C1E")
-    }
-
-    var pencilKitTool: PKTool {
-        switch tool {
-        case .pen: PKInkingTool(.pen, color: inkColor, width: 3)
-        case .highlighter: PKInkingTool(.marker, color: inkColor, width: 22)
-        case .eraser: PKEraserTool(eraserMode == .stroke ? .vector : .bitmap)
-        case .lasso: PKLassoTool()
-        }
-    }
+    let palette = ToolPalette()
 
     // MARK: Agent and banners
 
@@ -134,7 +90,6 @@ final class CanvasModel {
         self.file = file
         self.content = content
         currentPageID = content.pages.first?.id
-        swatches = Self.loadSwatches()
         for page in content.pages {
             for card in page.cards where card.isAnimated { clocks[card.id] = AnimationClock() }
         }
@@ -188,6 +143,10 @@ final class CanvasModel {
     private func changed() {
         refreshUndo()
         store.touch(document.id)
+        scheduleSave()
+    }
+
+    private func scheduleSave() {
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(600))
@@ -219,10 +178,16 @@ final class CanvasModel {
 
     // MARK: Pages
 
+    /// Adds a blank page after `pageID`, or at the end.
     @discardableResult
     func addPage(after pageID: UUID?) -> UUID {
-        let page = NotePage()
-        let at = pageID.flatMap(index(of:)).map { $0 + 1 } ?? content.pages.count
+        addPage(at: pageID.flatMap(index(of:)).map { $0 + 1 } ?? content.pages.count)
+    }
+
+    @discardableResult
+    func addPage(at index: Int) -> UUID {
+        let page = NotePage(height: screenPageHeight)
+        let at = min(max(index, 0), content.pages.count)
         edit("Add Page") {
             $0.pages.insert(page, at: at)
             $0.history.append(HistoryEntry(author: .you, text: "Added page \(at + 1)"))
@@ -251,12 +216,41 @@ final class CanvasModel {
         fixCurrentPage()
     }
 
-    func addSpace(to pageID: UUID) {
-        guard let i = index(of: pageID) else { return }
-        edit("Add Space") {
-            $0.pages[i].height += NotePageMetrics.addedSpace
-            $0.history.append(HistoryEntry(author: .you, text: "Added space to page \(i + 1)"))
+    /// Moves a page to `index` in the list (one undo step).
+    func movePage(_ pageID: UUID, to index: Int) {
+        guard let from = self.index(of: pageID) else { return }
+        let to = min(max(index, 0), content.pages.count - 1)
+        guard from != to else { return }
+        edit("Move Page", reload: false) {
+            let page = $0.pages.remove(at: from)
+            $0.pages.insert(page, at: to)
+            $0.history.append(HistoryEntry(author: .you, text: "Moved page \(from + 1) to \(to + 1)"))
         }
+    }
+
+    /// Whether deleting the page would lose anything.
+    func pageHasContent(_ pageID: UUID) -> Bool {
+        guard let page = page(pageID) else { return false }
+        return !page.drawing.strokes.isEmpty || !page.agentDrawing.strokes.isEmpty || !page.images.isEmpty
+            || !page.cards.isEmpty
+    }
+
+    /// A page's height in page points when it exactly fills the screen. New pages are made this size.
+    private(set) var screenPageHeight = NotePageMetrics.height
+
+    /// Sizes pages to the screen: a blank page fits it exactly, a page with something on it only ever grows (so
+    /// nothing is cut off, and a page written in portrait scrolls in landscape). Not an undo step.
+    func fitPages(toHeight height: CGFloat) {
+        screenPageHeight = height
+        var changed = false
+        for i in content.pages.indices {
+            let page = content.pages[i]
+            let blank = !pageHasContent(page.id)
+            guard blank ? abs(page.height - height) > 0.5 : page.height < height else { continue }
+            content.pages[i].height = height
+            changed = true
+        }
+        if changed { scheduleSave() }
     }
 
     var background: PageBackground? { content.background }
@@ -389,6 +383,17 @@ final class CanvasModel {
     // MARK: Agent
 
     /// The agent control: starts talking, or stops whatever the agent is doing.
+    /// One line for the agent bar while the agent listens or works.
+    var agentLine: String {
+        switch agent {
+        case .idle: ""
+        case .listening: "Listening…"
+        case .thinking: "Thinking…"
+        }
+    }
+
+    func stopAgent() { agent = .idle }
+
     func toggleAgent() {
         if agent != .idle {
             agent = .idle
@@ -403,6 +408,7 @@ final class CanvasModel {
     func send(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, keysReady(voice: false) else { return }
+        showsKeyboard = false
         log(text)
         changed()
     }
@@ -429,46 +435,6 @@ final class CanvasModel {
             return false
         }
         return true
-    }
-
-    // MARK: Swatches
-
-    private static let swatchesKey = "canvasSwatches"
-    static let defaultSwatches = ["#1C1C1E", "#007AFF", "#FF3B30", "#34C759", "#FFCC00"]
-
-    private static func loadSwatches() -> [String] {
-        let saved = UserDefaults.standard.stringArray(forKey: swatchesKey) ?? []
-        return saved.isEmpty ? defaultSwatches : saved
-    }
-
-    private func saveSwatches() {
-        UserDefaults.standard.set(swatches, forKey: Self.swatchesKey)
-    }
-
-    func selectSwatch(_ index: Int) {
-        selectedSwatch = index
-        if tool == .eraser || tool == .lasso { tool = .pen }
-    }
-
-    /// Adds a colour and selects it; returns its index.
-    func addSwatch(_ color: UIColor) -> Int {
-        swatches.append(color.hex)
-        saveSwatches()
-        selectSwatch(swatches.count - 1)
-        return swatches.count - 1
-    }
-
-    func setSwatch(_ index: Int, to color: UIColor) {
-        guard swatches.indices.contains(index) else { return }
-        swatches[index] = color.hex
-        saveSwatches()
-    }
-
-    func removeSwatch(_ index: Int) {
-        guard swatches.count > 1, swatches.indices.contains(index) else { return }
-        swatches.remove(at: index)
-        saveSwatches()
-        if selectedSwatch >= index { selectedSwatch = max(0, selectedSwatch - 1) }
     }
 }
 

@@ -1,12 +1,11 @@
 import PencilKit
 import SwiftUI
 
-/// Page sizes, in page points. Pages are landscape Letter, like the library thumbnails.
+/// Page sizes, in page points. Every page is 1100 wide; its height is set to fill the screen (`CanvasModel.fitPages`),
+/// starting from landscape Letter.
 enum NotePageMetrics {
     static let width: CGFloat = 1100
     static let height: CGFloat = 850
-    /// How much "Add Space" lengthens the page.
-    static let addedSpace: CGFloat = 425
     /// Distance between the background's dots or grid lines.
     static let backgroundSpacing: CGFloat = 32
 }

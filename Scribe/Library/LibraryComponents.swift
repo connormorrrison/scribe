@@ -218,14 +218,15 @@ extension View {
         .opacity(active && !selected ? 0.85 : 1)
     }
 
-    @ViewBuilder
-    func prominentGlassButton() -> some View {
-        if #available(iOS 26.0, *) { buttonStyle(.glassProminent) } else { buttonStyle(.borderedProminent) }
+    /// A filled capsule button, for the main action on content or inside a glass bar. Never glass itself: Liquid
+    /// Glass belongs to floating controls, not content, and is never stacked on glass (DESIGN.md).
+    func primaryActionButton() -> some View {
+        buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
     }
 
-    @ViewBuilder
-    func secondaryGlassButton() -> some View {
-        if #available(iOS 26.0, *) { buttonStyle(.glass) } else { buttonStyle(.bordered) }
+    /// A tinted capsule button, for other actions on content or inside a glass bar.
+    func secondaryActionButton() -> some View {
+        buttonStyle(.bordered).buttonBorderShape(.capsule)
     }
 }
 

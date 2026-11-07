@@ -144,10 +144,10 @@ struct LibraryEmptyState: View {
         } actions: {
             HStack(spacing: 12) {
                 Button("New Note", systemImage: "plus", action: create)
-                    .prominentGlassButton()
+                    .primaryActionButton()
                 if let importPDF {
                     Button("Import PDF", systemImage: "doc.badge.plus", action: importPDF)
-                        .secondaryGlassButton()
+                        .secondaryActionButton()
                 }
             }
         }

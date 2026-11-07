@@ -135,11 +135,13 @@ struct PageBackgroundView: View {
             var marks = Path()
             let r = 1.1 * spacing / 24
             for region in regions {
+                // Centred across the width, so the margins at the left and right edges match.
+                let startX = region.minX + (region.width.truncatingRemainder(dividingBy: spacing) + spacing) / 2
                 switch style {
                 case .dots:
                     var y = region.minY + spacing / 2
                     while y < region.maxY {
-                        var x = region.minX + spacing / 2
+                        var x = startX
                         while x < region.maxX {
                             marks.addEllipse(in: CGRect(x: x - r, y: y - r, width: 2 * r, height: 2 * r))
                             x += spacing
@@ -147,7 +149,7 @@ struct PageBackgroundView: View {
                         y += spacing
                     }
                 case .grid:
-                    var x = region.minX + spacing / 2
+                    var x = startX
                     while x < region.maxX {
                         marks.move(to: CGPoint(x: x, y: region.minY)); marks.addLine(to: CGPoint(x: x, y: region.maxY))
                         x += spacing
