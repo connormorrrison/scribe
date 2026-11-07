@@ -74,20 +74,25 @@ struct InkSwatch: Codable, Identifiable, Hashable {
 /// The tool, the eraser mode, and each inking tool's colours. Colours persist per tool, app-wide.
 @MainActor @Observable
 final class ToolPalette {
-    var tool = CanvasTool.pen
-    var eraserMode = EraserMode.stroke
+    /// The tool and eraser mode carry over to the next launch, like the colours.
+    var tool: CanvasTool { didSet { UserDefaults.standard.set(tool.rawValue, forKey: Self.toolKey) } }
+    var eraserMode: EraserMode { didSet { UserDefaults.standard.set(eraserMode.rawValue, forKey: Self.eraserKey) } }
 
     private(set) var penSwatches: [InkSwatch] { didSet { Self.save(penSwatches, Self.penKey) } }
     private(set) var highlighterSwatches: [InkSwatch] { didSet { Self.save(highlighterSwatches, Self.highlighterKey) } }
     private var selectedPen: UUID? { didSet { Self.saveID(selectedPen, Self.selectedPenKey) } }
     private var selectedHighlighter: UUID? { didSet { Self.saveID(selectedHighlighter, Self.selectedHighlighterKey) } }
 
+    static let toolKey = "palette.tool"
+    static let eraserKey = "palette.eraserMode"
     private static let penKey = "palette.pen"
     private static let highlighterKey = "palette.highlighter"
     private static let selectedPenKey = "palette.selectedPen"
     private static let selectedHighlighterKey = "palette.selectedHighlighter"
 
     init() {
+        tool = UserDefaults.standard.string(forKey: Self.toolKey).flatMap(CanvasTool.init(rawValue:)) ?? .pen
+        eraserMode = UserDefaults.standard.string(forKey: Self.eraserKey).flatMap(EraserMode.init(rawValue:)) ?? .stroke
         let pens = Self.load(Self.penKey) ?? InkSwatch.penDefaults
         let highlighters = Self.load(Self.highlighterKey) ?? InkSwatch.highlighterDefaults
         penSwatches = pens

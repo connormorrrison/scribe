@@ -26,12 +26,23 @@
 		AEED381763459F5F54EC8408 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E66F58B9DD78240A1F23C206 /* ContentView.swift */; };
 		BB2F2D12AED42D64BD5CE10E /* PDFPages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E779F3184B19AEAA00EAA17 /* PDFPages.swift */; };
 		C4457AFB46EBCC8F7A30D469 /* ScribeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 572ACD849DC28AE0C35FCA9B /* ScribeApp.swift */; };
+		C4CF9AFD09B05EFACFA9892B /* StorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F94F6A37B544CB63AE47FE /* StorageTests.swift */; };
 		C63F0DCDFBB6E8F822046B9D /* CanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 243DBA695ADE6FE401D00CCE /* CanvasView.swift */; };
 		D70A5D3E45A53257F3B92E36 /* CanvasModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8900E725F8A514F963B95607 /* CanvasModel.swift */; };
 		F6EB18EEAA041A038DFC5752 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0D9B56D3A82F894C60EF067C /* Assets.xcassets */; };
 		F6F3C49E0105FC7C48004286 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2359330E1EA83443BDC99A30 /* SettingsView.swift */; };
 		FD853A1E96709A2DDDA40289 /* CanvasChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76C3F842C2A4F07CB4378424 /* CanvasChrome.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		8C7CE2374CB85053DDBD1C4A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0911AD40AB20891FC5ABBE8B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 33F14FC823B69894B58E6BB8;
+			remoteInfo = Scribe;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		0D9B56D3A82F894C60EF067C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -53,10 +64,12 @@
 		8E7D00974B33FE33E399C2F9 /* DocumentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentsView.swift; sourceTree = "<group>"; };
 		9218C5FA0A854F8BA6DDF814 /* LibraryComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryComponents.swift; sourceTree = "<group>"; };
 		9C918495C5E0EF8EDCC9CAFE /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		A48F31FA2EDE28B4C986C479 /* ScribeTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ScribeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		ADC7740DAAC0D91EBC9F066D /* PageRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageRenderer.swift; sourceTree = "<group>"; };
 		B9C170F0EA4BE2F97F196EC5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		BB421B9D94FB197E2C91FE44 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		BDB34195BC271AA08CD75181 /* Caveat-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Caveat-OFL.txt"; sourceTree = "<group>"; };
+		C5F94F6A37B544CB63AE47FE /* StorageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageTests.swift; sourceTree = "<group>"; };
 		C746A923AB93043D4A2EF9ED /* LandingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingView.swift; sourceTree = "<group>"; };
 		E4DE0CB64DEF1532373596B3 /* Claude.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Claude.swift; sourceTree = "<group>"; };
 		E66F58B9DD78240A1F23C206 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -101,6 +114,7 @@
 			isa = PBXGroup;
 			children = (
 				11345C81116DC36BA7419B25 /* Scribe.app */,
+				A48F31FA2EDE28B4C986C479 /* ScribeTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -120,6 +134,14 @@
 				4ED2E734490566000F0A1854 /* Caveat.ttf */,
 			);
 			path = Fonts;
+			sourceTree = "<group>";
+		};
+		AF01848C2632E4D1F14094B3 /* ScribeTests */ = {
+			isa = PBXGroup;
+			children = (
+				C5F94F6A37B544CB63AE47FE /* StorageTests.swift */,
+			);
+			path = ScribeTests;
 			sourceTree = "<group>";
 		};
 		CE0A276A257FD1674B6227E6 /* Scribe */ = {
@@ -143,6 +165,7 @@
 			isa = PBXGroup;
 			children = (
 				CE0A276A257FD1674B6227E6 /* Scribe */,
+				AF01848C2632E4D1F14094B3 /* ScribeTests */,
 				637CC253C48F5DA69FAD3A59 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -181,6 +204,24 @@
 			productReference = 11345C81116DC36BA7419B25 /* Scribe.app */;
 			productType = "com.apple.product-type.application";
 		};
+		6240F4D993E26A2F5375238E /* ScribeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E741CF0D2CF743E5831A4293 /* Build configuration list for PBXNativeTarget "ScribeTests" */;
+			buildPhases = (
+				153EEDEC87E548E526AAA77D /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CA01F856DB8B7E97E499A0A0 /* PBXTargetDependency */,
+			);
+			name = ScribeTests;
+			packageProductDependencies = (
+			);
+			productName = ScribeTests;
+			productReference = A48F31FA2EDE28B4C986C479 /* ScribeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -191,6 +232,10 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					33F14FC823B69894B58E6BB8 = {
+						DevelopmentTeam = 9Q39KHPLZH;
+						ProvisioningStyle = Automatic;
+					};
+					6240F4D993E26A2F5375238E = {
 						DevelopmentTeam = 9Q39KHPLZH;
 						ProvisioningStyle = Automatic;
 					};
@@ -211,6 +256,7 @@
 			projectRoot = "";
 			targets = (
 				33F14FC823B69894B58E6BB8 /* Scribe */,
+				6240F4D993E26A2F5375238E /* ScribeTests */,
 			);
 		};
 /* End PBXProject section */
@@ -251,6 +297,14 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		153EEDEC87E548E526AAA77D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C4CF9AFD09B05EFACFA9892B /* StorageTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A3C55BD5E9BF3DB4B77D78FC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -281,7 +335,55 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		CA01F856DB8B7E97E499A0A0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 33F14FC823B69894B58E6BB8 /* Scribe */;
+			targetProxy = 8C7CE2374CB85053DDBD1C4A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		2888F02B7CCC4CE657242862 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9Q39KHPLZH;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.connormorrison.scribe.tests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Scribe.app/Scribe";
+			};
+			name = Release;
+		};
+		555FA8EFA1338E7D76D63FF9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9Q39KHPLZH;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.connormorrison.scribe.tests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Scribe.app/Scribe";
+			};
+			name = Debug;
+		};
 		744AF67DB3094D104DF4907F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -470,6 +572,15 @@
 			buildConfigurations = (
 				9F8A1B8A75D17DD51FD97E84 /* Debug */,
 				A7734ADE561C375D5F93F7CF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E741CF0D2CF743E5831A4293 /* Build configuration list for PBXNativeTarget "ScribeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				555FA8EFA1338E7D76D63FF9 /* Debug */,
+				2888F02B7CCC4CE657242862 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

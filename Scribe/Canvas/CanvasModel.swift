@@ -8,8 +8,10 @@ enum AgentState: Equatable {
 
 /// A banner just under the top row.
 enum CanvasBanner: Equatable {
-    /// Something went wrong; offers Settings and Try again.
+    /// Something went wrong with the agent; offers Settings and Try again.
     case error(String)
+    /// Something else to know (an image that couldn't be opened, a save that failed); offers OK.
+    case notice(String)
     /// The agent asks the person to pick one of a few chips.
     case choice(prompt: String, options: [String])
 }
@@ -111,7 +113,11 @@ final class CanvasModel {
         self.document = document
         let file = NoteFile(directory: store.noteDirectory(for: document.id))
         let pdfURL = document.kind == .pdf ? store.fileURL(for: document) : nil
-        let content = file.load(pdf: pdfURL)
+        let loaded = file.read(pdf: pdfURL)
+        let content = loaded.content
+        if loaded.fromDisk {
+            file.removeImages(notIn: Set(content.pages.flatMap { $0.images.map(\.fileName) }))
+        }
         self.pdfURL = pdfURL
         self.file = file
         self.content = content
@@ -178,15 +184,25 @@ final class CanvasModel {
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(600))
             guard !Task.isCancelled, let self else { return }
-            self.file.save(self.content)
-            NoteThumbnails.shared.invalidate(self.document.id)
+            self.write()
         }
     }
 
+    /// Writes the note now; says so on the page if it can't be saved.
+    private func write() {
+        if file.save(content) {
+            if case .notice(let text) = banner, text == Self.saveFailed { banner = nil }
+        } else {
+            banner = .notice(Self.saveFailed)
+        }
+        NoteThumbnails.shared.invalidate(document.id)
+    }
+
+    private static let saveFailed = "This note couldn't be saved. Free up some space on your iPad, then keep working: it saves again with every change."
+
     func saveNow() {
         saveTask?.cancel()
-        file.save(content)
-        NoteThumbnails.shared.invalidate(document.id)
+        write()
     }
 
     private func fixCurrentPage() {
@@ -368,7 +384,7 @@ final class CanvasModel {
     func addImage(_ data: Data) {
         guard let image = UIImage(data: data), image.size.width > 0, image.size.height > 0,
               let pageID = currentPageID ?? content.pages.first?.id, let i = index(of: pageID) else {
-            banner = .error("That image couldn't be opened.")
+            banner = .notice("That image couldn't be opened.")
             return
         }
         let page = content.pages[i]

@@ -312,6 +312,21 @@ struct ErrorBanner: View {
     }
 }
 
+/// Something to know, with OK to dismiss it.
+struct NoticeBanner: View {
+    let message: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        CanvasBannerBar {
+            Image(systemName: "info.circle.fill").foregroundStyle(.secondary)
+            Text(message).lineLimit(2)
+            Spacer(minLength: 4)
+            Button("OK", action: dismiss).secondaryActionButton()
+        }
+    }
+}
+
 struct ChoiceBanner: View {
     let prompt: String
     let options: [String]

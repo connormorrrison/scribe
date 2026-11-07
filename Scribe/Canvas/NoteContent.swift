@@ -1,3 +1,4 @@
+import OSLog
 import PencilKit
 import SwiftUI
 
@@ -127,24 +128,46 @@ struct NoteFile {
 
     var contentURL: URL? { directory?.appendingPathComponent("note.json") }
 
-    /// What's saved; for an imported PDF that's never been opened, one page per PDF page.
-    func load(pdf: URL? = nil) -> NoteContent {
-        guard let url = contentURL, let data = try? Data(contentsOf: url),
-              let content = try? JSONDecoder().decode(NoteContent.self, from: data),
-              !content.pages.isEmpty else {
-            if let pdf {
-                let pages = PDFPages.notePages(from: pdf)
-                if !pages.isEmpty { return NoteContent(pages: pages) }
-            }
-            return NoteContent()
-        }
-        return content
+    /// What was read, and whether it came from a saved file.
+    struct Loaded {
+        var content: NoteContent
+        /// False for a new note (or a PDF never opened), or when the saved file couldn't be read.
+        var fromDisk: Bool
     }
 
-    func save(_ content: NoteContent) {
-        guard let directory, let url = contentURL, let data = try? JSONEncoder().encode(content) else { return }
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+    /// What's saved; for an imported PDF that's never been opened, one page per PDF page.
+    func load(pdf: URL? = nil) -> NoteContent { read(pdf: pdf).content }
+
+    /// Like `load`, and says where the content came from. A saved file that can't be read is set aside (kept for
+    /// recovery, see `StoredFile.setAside`) rather than left to be overwritten by the next save.
+    func read(pdf: URL? = nil) -> Loaded {
+        if let url = contentURL, FileManager.default.fileExists(atPath: url.path) {
+            if let data = try? Data(contentsOf: url),
+               let content = try? JSONDecoder().decode(NoteContent.self, from: data), !content.pages.isEmpty {
+                return Loaded(content: content, fromDisk: true)
+            }
+            StoredFile.setAside(url)
+        }
+        if let pdf {
+            let pages = PDFPages.notePages(from: pdf)
+            if !pages.isEmpty { return Loaded(content: NoteContent(pages: pages), fromDisk: false) }
+        }
+        return Loaded(content: NoteContent(), fromDisk: false)
+    }
+
+    /// Writes `note.json` atomically. False (and logged) if it couldn't be written.
+    @discardableResult
+    func save(_ content: NoteContent) -> Bool {
+        guard let directory, let url = contentURL else { return true } // In memory (previews): nothing to write.
+        do {
+            let data = try JSONEncoder().encode(content)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            StoredFile.log.error("Couldn't save \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return false
+        }
     }
 
     func imageURL(_ fileName: String) -> URL? { directory?.appendingPathComponent(fileName) }
@@ -153,9 +176,41 @@ struct NoteFile {
     func saveImage(_ data: Data) -> String {
         let name = "\(UUID().uuidString).jpg"
         if let directory, let url = imageURL(name) {
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try? data.write(to: url, options: .atomic)
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                StoredFile.log.error("Couldn't save image \(name, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
         }
         return name
+    }
+
+    /// Deletes image files no page uses any more (left by deleted images). Only safe when nothing can bring them
+    /// back, so it runs when a note opens, before there's anything to undo.
+    func removeImages(notIn used: Set<String>) {
+        guard let directory,
+              let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return }
+        for name in names where name.hasSuffix(".jpg") && !used.contains(name) {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        }
+    }
+}
+
+/// Shared handling for the files Scribe saves.
+enum StoredFile {
+    static let log = Logger(subsystem: "com.connormorrison.scribe", category: "storage")
+
+    /// Moves a saved file that can't be read to `<name>.unreadable-<date>.json` next to it. Nothing reads or deletes
+    /// it, so it can be recovered; and the next save writes a new file instead of overwriting it.
+    static func setAside(_ url: URL) {
+        let stamp = ISO8601DateFormatter().string(from: .now).replacingOccurrences(of: ":", with: "-")
+        let backup = url.deletingPathExtension().appendingPathExtension("unreadable-\(stamp).json")
+        do {
+            try FileManager.default.moveItem(at: url, to: backup)
+            log.error("Set aside unreadable \(url.lastPathComponent, privacy: .public) as \(backup.lastPathComponent, privacy: .public)")
+        } catch {
+            log.error("Couldn't set aside \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
     }
 }

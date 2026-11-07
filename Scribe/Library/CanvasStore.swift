@@ -200,24 +200,35 @@ final class CanvasStore {
         var documents: [CanvasDocument]
     }
 
+    /// Reads `library.json`. One that exists but can't be read is set aside (kept for recovery), so the next save
+    /// can't overwrite the library with an empty one.
     private func load() {
-        guard let url = indexURL, let data = try? Data(contentsOf: url) else { return }
+        guard let url = indexURL, FileManager.default.fileExists(atPath: url.path) else { return }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let snapshot = try? decoder.decode(Snapshot.self, from: data) else { return }
+        guard let data = try? Data(contentsOf: url),
+              let snapshot = try? decoder.decode(Snapshot.self, from: data) else {
+            StoredFile.setAside(url)
+            return
+        }
         folders = snapshot.folders
         all = snapshot.documents
         sortFolders()
     }
 
+    /// Writes `library.json` atomically after every change.
     private func save() {
         guard let directory, let url = indexURL else { return }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(Snapshot(folders: folders, documents: all)) else { return }
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+        do {
+            let data = try encoder.encode(Snapshot(folders: folders, documents: all))
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            StoredFile.log.error("Couldn't save the library: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func purgeExpiredTrash() {

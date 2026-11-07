@@ -8,6 +8,8 @@ targets:
     type: application
     platform: iOS
     sources: [Scribe]
+    scheme:
+      testTargets: [ScribeTests]
     preBuildScripts:
       - name: Only Claude Haiku 5.5
         script: '"$SRCROOT/scripts/check-model.sh"'
@@ -30,3 +32,17 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+  ScribeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [ScribeTests]
+    dependencies:
+      - target: Scribe
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.connormorrison.scribe.tests
+        DEVELOPMENT_TEAM: 9Q39KHPLZH
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "2"
+        SWIFT_VERSION: "5.0"

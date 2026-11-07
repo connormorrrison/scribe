@@ -30,6 +30,7 @@ struct CanvasView: View {
     @State private var exportFile: PDFFile?
     @State private var shareURL: URL?
     @State private var showsPageLabel = false
+    @Environment(\.scenePhase) private var scenePhase
 
     init(store: CanvasStore, document: CanvasDocument, onBack: @escaping () -> Void) {
         _model = State(initialValue: CanvasModel(store: store, document: document))
@@ -95,6 +96,10 @@ struct CanvasView: View {
             Task { placeImage(try? await item.loadTransferable(type: Data.self)) }
         }
         .onDisappear { model.saveNow() }
+        // Leaving the app (or the app switcher) saves straight away: iOS may end the app without warning after.
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { model.saveNow() }
+        }
     }
 
     // MARK: Pages
@@ -227,7 +232,10 @@ struct CanvasView: View {
 
     @ViewBuilder
     private var banners: some View {
-        if case .error(let text) = model.banner {
+        if case .notice(let text) = model.banner {
+            NoticeBanner(message: text) { model.banner = nil }
+                .transition(.move(edge: .top).combined(with: .opacity))
+        } else if case .error(let text) = model.banner {
             ErrorBanner(message: text, openSettings: { showsSettings = true }, retry: { model.retry() })
                 .transition(.move(edge: .top).combined(with: .opacity))
         } else if case .choice(let prompt, let options) = model.banner {
@@ -326,7 +334,7 @@ struct CanvasView: View {
     /// Puts a picked image on the page, selected, or says why it can't.
     private func placeImage(_ data: Data?) {
         guard let data else {
-            model.banner = .error("That image couldn't be opened.")
+            model.banner = .notice("That image couldn't be opened.")
             return
         }
         withAnimation(.snappy) { model.addImage(data) }
