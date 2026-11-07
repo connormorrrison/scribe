@@ -18,5 +18,6 @@ Keep it simple: two typefaces, each with one job.
 - The font is bundled at `Scribe/Fonts/Caveat.ttf` and registered through `UIAppFonts` in `project.yml`. Its
   PostScript name is `Caveat-Regular`, and its licence (SIL OFL 1.1) is at `Scribe/Fonts/Caveat-OFL.txt`.
 - In code, go through `Handwriting` (`Scribe/Landing/LandingSupport.swift`) rather than naming the font
-  directly, so there is one place to change it.
+  directly, so there is one place to change it. For SwiftUI text, use `Handwriting.text(_:size:)`: the app sets
+  `.fontDesign(.rounded)` everywhere, which would otherwise turn Caveat into SF Pro Rounded.
 - Never use Caveat for UI text, and never use SF Pro Rounded for agent ink.

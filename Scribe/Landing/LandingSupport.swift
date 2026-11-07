@@ -72,6 +72,12 @@ enum Handwriting {
 
     static func swiftUIFont(size: CGFloat) -> Font { Font(font(size: size) as CTFont) }
 
+    /// Agent writing as SwiftUI text. It opts out of the app-wide `.fontDesign(.rounded)`, which would otherwise
+    /// swap Caveat for SF Pro Rounded (wider, so it overflows its measured width and gets clipped).
+    static func text(_ string: String, size: CGFloat) -> Text {
+        Text(string).font(swiftUIFont(size: size)).fontDesign(nil)
+    }
+
     static func width(of text: String, size: CGFloat) -> CGFloat {
         (text as NSString).size(withAttributes: [.font: font(size: size)]).width
     }
@@ -102,7 +108,7 @@ enum AgentRenderer {
             var reveal = context
             reveal.clip(to: Path(CGRect(x: at.x - width / 2 - 6, y: at.y - height,
                                         width: width * min(1, progress) + 6, height: 2 * height)))
-            reveal.draw(Text(text).font(Handwriting.swiftUIFont(size: size)).foregroundColor(color.color),
+            reveal.draw(Handwriting.text(text, size: size).foregroundColor(color.color),
                         at: at, anchor: .center)
         }
     }
