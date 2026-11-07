@@ -82,6 +82,17 @@ final class CanvasStore {
         return filesDirectory?.appendingPathComponent(name)
     }
 
+    /// Where a note keeps its pages, ink and images; nil for an in-memory store.
+    func noteDirectory(for documentID: UUID) -> URL? {
+        directory?.appendingPathComponent("Notes", isDirectory: true)
+            .appendingPathComponent(documentID.uuidString, isDirectory: true)
+    }
+
+    /// Marks a note as edited, so it sorts to the top.
+    func touch(_ documentID: UUID) {
+        update(documentID) { $0.modifiedAt = .now }
+    }
+
     /// Days left before a trashed document is deleted for good.
     func daysLeft(_ document: CanvasDocument) -> Int {
         guard let trashed = document.trashedAt else { return Self.trashDays }
@@ -163,6 +174,7 @@ final class CanvasStore {
 
     func deletePermanently(_ document: CanvasDocument) {
         if let url = fileURL(for: document) { try? FileManager.default.removeItem(at: url) }
+        if let url = noteDirectory(for: document.id) { try? FileManager.default.removeItem(at: url) }
         all.removeAll { $0.id == document.id }
         save()
     }

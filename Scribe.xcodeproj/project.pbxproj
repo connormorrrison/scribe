@@ -17,22 +17,34 @@
 		725DFD56586968C9007B1EBF /* Claude.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4DE0CB64DEF1532373596B3 /* Claude.swift */; };
 		7DAD1CD8DF36FF564CA402A4 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C918495C5E0EF8EDCC9CAFE /* LibraryView.swift */; };
 		9DD181BD50EBFDFE0C1C8FB4 /* LandingSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 476A60E5A29A896B3B628E93 /* LandingSupport.swift */; };
+		A48ED980C0236EF349B809E7 /* NoteContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F5CBE590B63076DCEB6808B /* NoteContent.swift */; };
+		A59657EF090060E81F858EA8 /* CanvasSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3024B3AD6BB82B96EB939752 /* CanvasSheets.swift */; };
+		A7358815B2A071633F2D231D /* PageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33D57331068EBC8DCB05B61F /* PageView.swift */; };
 		AA1C590EA95505626C7F0D4D /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB421B9D94FB197E2C91FE44 /* AppSettings.swift */; };
 		AEED381763459F5F54EC8408 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E66F58B9DD78240A1F23C206 /* ContentView.swift */; };
 		C4457AFB46EBCC8F7A30D469 /* ScribeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 572ACD849DC28AE0C35FCA9B /* ScribeApp.swift */; };
+		C63F0DCDFBB6E8F822046B9D /* CanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 243DBA695ADE6FE401D00CCE /* CanvasView.swift */; };
+		D70A5D3E45A53257F3B92E36 /* CanvasModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8900E725F8A514F963B95607 /* CanvasModel.swift */; };
 		F6EB18EEAA041A038DFC5752 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0D9B56D3A82F894C60EF067C /* Assets.xcassets */; };
 		F6F3C49E0105FC7C48004286 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2359330E1EA83443BDC99A30 /* SettingsView.swift */; };
+		FD853A1E96709A2DDDA40289 /* CanvasChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76C3F842C2A4F07CB4378424 /* CanvasChrome.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		0D9B56D3A82F894C60EF067C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		11345C81116DC36BA7419B25 /* Scribe.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Scribe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2359330E1EA83443BDC99A30 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		243DBA695ADE6FE401D00CCE /* CanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasView.swift; sourceTree = "<group>"; };
+		2F5CBE590B63076DCEB6808B /* NoteContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteContent.swift; sourceTree = "<group>"; };
+		3024B3AD6BB82B96EB939752 /* CanvasSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasSheets.swift; sourceTree = "<group>"; };
+		33D57331068EBC8DCB05B61F /* PageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageView.swift; sourceTree = "<group>"; };
 		342F06A17C09B5265B73A29A /* CanvasStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasStore.swift; sourceTree = "<group>"; };
 		476A60E5A29A896B3B628E93 /* LandingSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingSupport.swift; sourceTree = "<group>"; };
 		4ED2E734490566000F0A1854 /* Caveat.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Caveat.ttf; sourceTree = "<group>"; };
 		572ACD849DC28AE0C35FCA9B /* ScribeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScribeApp.swift; sourceTree = "<group>"; };
 		5A3180D2749FBC4F034A65EB /* LibraryScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryScreens.swift; sourceTree = "<group>"; };
+		76C3F842C2A4F07CB4378424 /* CanvasChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasChrome.swift; sourceTree = "<group>"; };
+		8900E725F8A514F963B95607 /* CanvasModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasModel.swift; sourceTree = "<group>"; };
 		8E7D00974B33FE33E399C2F9 /* DocumentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentsView.swift; sourceTree = "<group>"; };
 		9218C5FA0A854F8BA6DDF814 /* LibraryComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryComponents.swift; sourceTree = "<group>"; };
 		9C918495C5E0EF8EDCC9CAFE /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
@@ -61,6 +73,19 @@
 				C746A923AB93043D4A2EF9ED /* LandingView.swift */,
 			);
 			path = Landing;
+			sourceTree = "<group>";
+		};
+		3C2D85B5A950B4F91A951460 /* Canvas */ = {
+			isa = PBXGroup;
+			children = (
+				76C3F842C2A4F07CB4378424 /* CanvasChrome.swift */,
+				8900E725F8A514F963B95607 /* CanvasModel.swift */,
+				3024B3AD6BB82B96EB939752 /* CanvasSheets.swift */,
+				243DBA695ADE6FE401D00CCE /* CanvasView.swift */,
+				2F5CBE590B63076DCEB6808B /* NoteContent.swift */,
+				33D57331068EBC8DCB05B61F /* PageView.swift */,
+			);
+			path = Canvas;
 			sourceTree = "<group>";
 		};
 		637CC253C48F5DA69FAD3A59 /* Products */ = {
@@ -96,6 +121,7 @@
 				B9C170F0EA4BE2F97F196EC5 /* Info.plist */,
 				572ACD849DC28AE0C35FCA9B /* ScribeApp.swift */,
 				7F109013326288060775FA38 /* AI */,
+				3C2D85B5A950B4F91A951460 /* Canvas */,
 				80ECC09A60AB563DAA7AF65E /* Fonts */,
 				1FD1258537B46F2F60114C61 /* Landing */,
 				E2AABF5F88FF01CEEF3087CC /* Library */,
@@ -221,7 +247,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA1C590EA95505626C7F0D4D /* AppSettings.swift in Sources */,
+				FD853A1E96709A2DDDA40289 /* CanvasChrome.swift in Sources */,
+				D70A5D3E45A53257F3B92E36 /* CanvasModel.swift in Sources */,
+				A59657EF090060E81F858EA8 /* CanvasSheets.swift in Sources */,
 				24E40CA6BA4B010023A41DA9 /* CanvasStore.swift in Sources */,
+				C63F0DCDFBB6E8F822046B9D /* CanvasView.swift in Sources */,
 				725DFD56586968C9007B1EBF /* Claude.swift in Sources */,
 				AEED381763459F5F54EC8408 /* ContentView.swift in Sources */,
 				52FCCC00F01B9407405FFC55 /* DocumentsView.swift in Sources */,
@@ -230,6 +260,8 @@
 				1FBC3C7078AEA69EF13353CD /* LibraryComponents.swift in Sources */,
 				5D4C67CE8E4DA61D198F3613 /* LibraryScreens.swift in Sources */,
 				7DAD1CD8DF36FF564CA402A4 /* LibraryView.swift in Sources */,
+				A48ED980C0236EF349B809E7 /* NoteContent.swift in Sources */,
+				A7358815B2A071633F2D231D /* PageView.swift in Sources */,
 				C4457AFB46EBCC8F7A30D469 /* ScribeApp.swift in Sources */,
 				F6F3C49E0105FC7C48004286 /* SettingsView.swift in Sources */,
 			);

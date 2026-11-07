@@ -130,7 +130,7 @@ struct LibraryView: View {
         case .recents: RecentsView(store: store)
         case .documents: DocumentsView(store: store)
         case .folder(let id): FolderView(store: store, folderID: id).id(id)
-        case .note(let id): DocumentView(store: store, documentID: id).id(id)
+        case .note(let id): DocumentView(store: store, documentID: id) { self.item = .documents }.id(id)
         case .trash: TrashView(store: store)
         case .settings: SettingsView()
         }

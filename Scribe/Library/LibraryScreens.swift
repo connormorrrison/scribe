@@ -147,23 +147,23 @@ struct TrashView: View {
 struct DocumentView: View {
     @Bindable var store: CanvasStore
     let documentID: UUID
-    @AppStorage(AppSettings.pageBackground) private var background = PageBackground.dots
+    /// What Back does; nil pops the navigation stack.
+    var onBack: (() -> Void)? = nil
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Group {
             if let document = store.document(documentID) {
-                Group {
-                    if document.kind == .pdf, let url = store.fileURL(for: document) {
-                        PDFKitView(url: url).ignoresSafeArea(edges: .bottom)
-                    } else {
-                        GeometryReader { geo in
-                            PageBackgroundView(style: background, regions: [CGRect(origin: .zero, size: geo.size)])
-                        }
-                        .background(.white)
+                if document.kind == .pdf, let url = store.fileURL(for: document) {
+                    PDFKitView(url: url)
                         .ignoresSafeArea(edges: .bottom)
+                        .roundedTitle(document.title, inline: true)
+                } else {
+                    CanvasView(store: store, document: document) {
+                        if let onBack { onBack() } else { dismiss() }
                     }
+                    .toolbar(.hidden, for: .navigationBar)
                 }
-                .roundedTitle(document.title, inline: true)
             } else {
                 ContentUnavailableView("Note Not Found", systemImage: "doc.questionmark")
             }

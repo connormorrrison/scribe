@@ -881,7 +881,7 @@ private extension View {
 }
 
 /// A 3D atom, projected to 2D: 12 shaded nucleons and three tilted orbits, spinning around the vertical axis.
-private struct AtomArt: View {
+struct AtomArt: View {
     let time: Double
     let s: CGFloat
 
@@ -978,7 +978,7 @@ private struct AtomArt: View {
 }
 
 /// f(x) = x³/3 − x with a dashed tangent line riding along it.
-private struct TangentArt: View {
+struct TangentArt: View {
     let time: Double
     let s: CGFloat
 
