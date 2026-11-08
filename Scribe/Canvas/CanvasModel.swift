@@ -582,12 +582,12 @@ final class CanvasModel {
     private func reply(speak: Bool) async throws {
         guard let claude = ClaudeClient() else { return }
         agent = .thinking
-        let answer = try await claude.send(Self.messages(for: content.conversation),
-                                           system: Self.agentPrompt(title: document.title),
-                                           maxTokens: 1024, effort: .low)
-            .text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Thinking counts toward max_tokens, so leave room for it on top of a short spoken answer.
+        let reply = try await claude.send(Self.messages(for: content.conversation),
+                                          system: Self.agentPrompt(title: document.title),
+                                          maxTokens: 4096, effort: .low)
         try Task.checkCancellation()
-        guard !answer.isEmpty else { return }
+        let answer = try reply.answer()
         content.conversation.append(ConversationTurn(speaker: .agent, text: answer, spoken: speak))
         changed()
         if speak { try await self.speak(answer) }
