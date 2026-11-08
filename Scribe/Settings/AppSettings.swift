@@ -37,7 +37,7 @@ enum HelpStyle: String, CaseIterable, Identifiable {
             the way to the answer, one small move per step, with arrows and circles on each for what moved, the answer \
             boxed, and a sketch when the idea has a shape. Don't ask them questions, quiz them or leave blanks for them to \
             fill in: they want to see it done, then do the next one themselves. If they're part way through their \
-            own working, carry on from where they got to. In your reply, say what the steps did in a sentence or two.
+            own working, carry on from where they got to. In your reply, just say in a few words what you did.
             """
         case .coach:
             """

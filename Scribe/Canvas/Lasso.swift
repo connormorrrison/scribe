@@ -32,7 +32,8 @@ struct PasteSpot: Equatable {
 
 /// What the person asks the agent about a lassoed region.
 enum LassoAction: Equatable {
-    /// One rung of the help ladder (1 to `HelpLadder.top`): a nudge, then the next step, then the full explanation.
+    /// One rung of the help ladder (1 to `HelpLadder.top`). With Show Me: the full working, then the hardest step
+    /// broken down further. With Coach Me: the first step, then the next, then the rest to the answer.
     case help(level: Int)
     case visualize
     /// They spoke or typed with a region selected: their words are about it.
@@ -69,7 +70,7 @@ enum LassoAction: Equatable {
     }
 }
 
-/// Help gets fuller each time it's asked for on the same spot: a nudge, then the next step, then the whole thing.
+/// Help gets fuller each time it's asked for on the same spot.
 struct HelpLadder {
     static let top = 3
 
@@ -105,8 +106,8 @@ struct LassoFocus {
     /// Just the visualization tool: a visualization request shouldn't write on the page.
     var drawsOnPage: Bool { action != .visualize }
 
-    /// What the agent reads beside the close-up, after the page map.
-    func instructions(objects: [PageObject]) -> String {
+    /// What the agent reads beside the close-up, after the page map. `style` shapes what Help gives at each level.
+    func instructions(objects: [PageObject], style: HelpStyle = .current) -> String {
         let box = "[\(n(bounds.minX)), \(n(bounds.minY)), \(n(bounds.width)), \(n(bounds.height))]"
         let near = "{\"box\": \(box)}"
         let beside = "beside it with write (near \(near), side right, or the free space closest to it)"
@@ -130,34 +131,47 @@ struct LassoFocus {
         }
         switch action {
         case .help(let level):
+            let level = min(max(level, 1), HelpLadder.top)
             lines.append("""
-                They pressed Help: level \(min(max(level, 1), HelpLadder.top)) of \(HelpLadder.top). Help gets fuller \
-                each time they ask about the same spot, so they learn by doing as much as they can themselves. First \
-                decide what it is. If it's a problem they're working on (their ink inside the box is their working), \
-                follow the level below. If it's something to understand rather than solve (printed text, a \
+                They pressed Help: level \(level) of \(HelpLadder.top) (they press it again on the same spot for more). \
+                First decide what it is. If it's something to understand rather than solve (printed text, a \
                 definition, a diagram, a concept), just explain it clearly at any level: the key idea in a few short \
-                lines \(beside), and a small labelled sketch with draw if a picture makes it clearer.
+                lines \(beside), and a small labelled sketch with draw if a picture makes it clearer. If it's a \
+                problem, help line by line: always with the steps tool near \(near), one small move per step, each \
+                with its why and arrows and circles on what moves, never a paragraph or a hint written in words. If \
+                their ink in the box is working part way, carry on from their last line; if a line of it is wrong, \
+                circle it in red first and start the steps from the fix.
                 """)
-            switch level {
-            case ...1:
+            switch (style, level) {
+            case (.show, 1):
                 lines.append("""
-                    Level 1, a nudge: don't give any steps or the answer. Write a hint \(beside): the idea they're \
-                    missing, or a question that points them the right way, in two or three short lines. Then say one \
-                    short, encouraging line about what to try, and that they can press Help again for more.
+                    Work it through all the way to the answer, boxed in green, in as many small steps as it takes. \
+                    Then say in a sentence or two what the steps did.
                     """)
-            case 2:
+            case (.show, _):
                 lines.append("""
-                    Level 2, the next step: your earlier hint for this spot is in YOUR MARKS; build on it, don't \
-                    repeat it. If their working goes wrong somewhere, circle that spot and say why in a few words. \
-                    Then write just the next step \(beside), with a small diagram from draw if it helps. Still don't \
-                    give the final answer. Say one short line about what to do next.
+                    Your earlier steps for this spot are in YOUR MARKS; don't redo them. Take the step that's hardest \
+                    to follow (the biggest jump) and break it into smaller steps with steps, near that am_N with side \
+                    right, box_answer false, plus a labelled sketch with draw when the idea has a shape. Then say in \
+                    a line the idea that makes that step work.
                     """)
-            default:
+            case (.coach, 1):
                 lines.append("""
-                    Level 3, the full explanation: your earlier help for this spot is in YOUR MARKS; build on it, \
-                    don't repeat it. Work it through to the answer \(beside), step by step, a few short lines a step \
-                    (use draw for a worked layout or diagram if it's clearer), and point out the idea that makes it \
-                    work. Then say in a line what to remember for next time.
+                    Show just the first step or two with steps (box_answer false), ending on a line with a "?" where \
+                    the next piece goes for them to fill in. Don't give the answer. Say one short line about what to \
+                    try, and that they can press Help again for more.
+                    """)
+            case (.coach, 2):
+                lines.append("""
+                    Your earlier steps for this spot are in YOUR MARKS; carry on from the last one (near it, side \
+                    below) with the next one or two steps, box_answer false, ending on a "?". Still don't give the \
+                    final answer. Say one short line about what to do next.
+                    """)
+            case (.coach, _):
+                lines.append("""
+                    Your earlier steps for this spot are in YOUR MARKS; carry on from the last one (near it, side \
+                    below) and work it through to the answer, boxed in green. Then say in a line what to remember \
+                    for next time.
                     """)
             }
         case .visualize:

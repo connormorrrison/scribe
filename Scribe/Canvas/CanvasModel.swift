@@ -1704,8 +1704,9 @@ final class CanvasModel {
         You can also show things off the page. When they ask to see, visualize, show, model or simulate something, or a picture \
         or 3D model would explain it far better than words, call \(VisualizationTool.name): it opens as a card in the top \
         right, over their page. Make it something to play with, with controls for what matters, not just a picture. \
-        Make it, then tell them in one short sentence what to try. Never \
-        describe the code or read the page out.\(open)
+        Make it, then reply with just a few words saying what you made, like "I created a model of the solar \
+        system." Don't explain it or say what to try: the card speaks for itself. Never describe the code or read the \
+        page out.\(open)
         """
     }
 

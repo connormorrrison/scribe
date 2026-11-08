@@ -45,10 +45,13 @@ final class LassoTests: XCTestCase {
                                action: .help(level: 1))
         let objects = focus.objects(in: snapshot)
         XCTAssertEqual(objects.map(\.id), ["ink_1"])
-        let text = focus.instructions(objects: objects)
+        let text = focus.instructions(objects: objects, style: .show)
         XCTAssertTrue(text.contains("ink_1 (handwriting) “2x + 3 = 7”"))
         XCTAssertTrue(text.contains("{\"box\": [100, 100, 200, 200]}"))
-        XCTAssertTrue(text.contains("Level 1, a nudge"))
+        // Help is line by line from the first press: the steps tool, all the way to the answer with Show Me.
+        XCTAssertTrue(text.contains("always with the steps tool"))
+        XCTAssertTrue(text.contains("all the way to the answer"))
+        XCTAssertTrue(focus.instructions(objects: objects, style: .coach).contains("first step or two"))
     }
 
     func testHelpClimbsOnTheSameSpotAndStartsOverElsewhere() {

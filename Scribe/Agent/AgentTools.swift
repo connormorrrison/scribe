@@ -243,8 +243,9 @@ enum AgentTools {
         with mark before you start, when it helps to see them). Grey is the app's, for arrows between steps. \
         And whenever the idea has a shape (a graph, a tangent, a number line, an area model, \
         a force diagram, a timeline, a cycle), sketch it with draw beside the steps, labelled: a picture they can \
-        see is often what makes it click. Keep words on the page to labels of a few words. Say the explaining out \
-        loud in your reply instead, a sentence or two about what you showed. \
+        see is often what makes it click. Keep words on the page to labels of a few words. After drawing or \
+        writing on the page, keep your reply to one short sentence saying what you did, like "I worked it through \
+        step by step." or "I sketched the graph for you." Don't explain it again: the page shows it. \
         Always target things by their id from the page map. Never guess coordinates from the picture: every object has \
         exact bounds. Put each thing beside what it's about: `near` its id. Use a free_N space only for something that         isn't about anything already on the page, and then the one nearest their work and on screen, not simply the         first listed. Spread your marks out and leave room around them rather than packing them together. Use outline_region on a ·traceable object to \
         trace its real lines; figures like maps are split into parts you can trace one by one. Each result says where your mark went; if it says something was moved, that's fine.
