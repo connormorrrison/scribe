@@ -57,6 +57,12 @@ struct PageView: View {
                     .offset(x: card.frame.minX * k, y: card.frame.minY * k)
             }
 
+            if let question = model.markedQuestion, question.pageID == page.id {
+                MarkedQuestionOverlay(question: question, scale: k)
+                    .frame(width: size.width, height: size.height)
+                    .transition(.opacity)
+            }
+
             if let lasso = model.lasso, lasso.pageID == page.id {
                 LassoOverlay(model: model, selection: lasso, scale: k, pageSize: size)
                     .frame(width: size.width, height: size.height)
@@ -394,6 +400,7 @@ struct InkCanvas: UIViewRepresentable {
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
             MainActor.assumeIsolated {
                 model.selectedImage = nil
+                model.penDown()
                 model.moveOn()
             }
         }

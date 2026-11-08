@@ -5,6 +5,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.pageBackground) private var pageBackground = PageBackground.dots
     @AppStorage(AppSettings.drawWithFinger) private var drawWithFinger = false
     @AppStorage(AppSettings.helpStyle) private var helpStyle = HelpStyle.show
+    @AppStorage(AppSettings.askWithQuestionMark) private var askWithQuestionMark = true
     @Bindable private var pageMap = PageMapDebug.shared
 
     private var version: String {
@@ -40,10 +41,11 @@ struct SettingsView: View {
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 300)
                 }
+                Toggle("Write ? to Ask", isOn: $askWithQuestionMark)
             } header: {
                 Text("Agent")
             } footer: {
-                Text("Show Me works it through step by step on your page, with arrows and drawings. Coach Me writes just the next step and leaves the rest for you.")
+                Text("Show Me works it through step by step on your page, with arrows and drawings. Coach Me writes just the next step and leaves the rest for you. With Write ? to Ask on, a ? written on its own beside anything asks the agent about it.")
             }
 
             Section("Appearance") {

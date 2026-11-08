@@ -37,12 +37,15 @@ enum LassoAction: Equatable {
     case visualize
     /// They spoke or typed with a region selected: their words are about it.
     case ask
+    /// They wrote a "?" beside it (with these words, if any: "why").
+    case marked(words: String?)
 
     var title: String {
         switch self {
         case .help(let level): level <= 1 ? "Help" : level == 2 ? "More Help" : "Explain It"
         case .visualize: "Visualize"
         case .ask: "Ask"
+        case .marked: "?"
         }
     }
 
@@ -50,7 +53,7 @@ enum LassoAction: Equatable {
         switch self {
         case .help(let level): level <= 1 ? "lifepreserver" : level == 2 ? "stairs" : "text.bubble"
         case .visualize: "cube.transparent"
-        case .ask: "questionmark.bubble"
+        case .ask, .marked: "questionmark.bubble"
         }
     }
 
@@ -61,6 +64,7 @@ enum LassoAction: Equatable {
             level <= 1 ? "Help me with this part of my page." : level == 2 ? "I need more help with this." : "Explain this one fully."
         case .visualize: "Visualize this part of my page."
         case .ask: ""
+        case .marked(let words): words.map { "\($0)?" } ?? "I'm stuck on this."
         }
     }
 }
@@ -95,6 +99,8 @@ struct LassoFocus {
     var pageID: UUID
     var bounds: CGRect
     var action: LassoAction
+    /// The "?" they wrote, for `.marked`.
+    var mark: CGRect? = nil
 
     /// Just the visualization tool: a visualization request shouldn't write on the page.
     var drawsOnPage: Bool { action != .visualize }
@@ -104,8 +110,16 @@ struct LassoFocus {
         let box = "[\(n(bounds.minX)), \(n(bounds.minY)), \(n(bounds.width)), \(n(bounds.height))]"
         let near = "{\"box\": \(box)}"
         let beside = "beside it with write (near \(near), side right, or the free space closest to it)"
-        var lines = ["They drew a lasso around part of the page: the box \(box) in page points, shown close up in "
+        var lines: [String]
+        if case .marked(let words) = action, let mark {
+            let at = "[\(n(mark.minX)), \(n(mark.minY)), \(n(mark.width)), \(n(mark.height))]"
+            let said = words.map { " with the words “\($0)?”" } ?? ""
+            lines = ["They wrote a “?”\(said) on the page at \(at), beside the box \(box) (page points, shown close up in "
+                     + "the next picture). The ? is their ink, not working: don't mark it or write over it."]
+        } else {
+            lines = ["They drew a lasso around part of the page: the box \(box) in page points, shown close up in "
                      + "the next picture."]
+        }
         if objects.isEmpty {
             lines.append("Nothing in the page map falls inside it; read it from the close-up.")
         } else {
@@ -151,6 +165,16 @@ struct LassoFocus {
                 They want it visualized. Call \(VisualizationTool.name) with something to play with that shows the \
                 idea in the box, built from what's actually there (its numbers, functions, shapes or words). Don't \
                 write on the page.
+                """)
+        case .marked(let words):
+            lines.append((words.map { "Answer “\($0)?” about it. " } ?? "") + """
+                Writing a ? is how they say they're stuck here, without having to say what on. Work out what they \
+                need from what's there. Nothing written for a question yet: show how to do it (as your help style \
+                says). Working part way: carry on from where they got to, and if a line is wrong, circle it in red \
+                first. A finished answer: check it, a green tick if it's right, or circle the mistake in red and show \
+                the fix. Beside one of your own steps (am_N): explain that step more fully, a sketch if it helps. \
+                Printed text, a definition or a figure: explain it simply, with a labelled sketch when the idea has \
+                a shape. Put your working beside it, near \(near), not over their ?.
                 """)
         case .ask:
             lines.append("What they said is about this part of the page. If you write an answer on the page, put it beside it (near \(near)).")

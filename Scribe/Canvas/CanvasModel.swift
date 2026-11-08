@@ -162,6 +162,12 @@ final class CanvasModel {
     /// How much help the last Help gave, and where, so asking again on the same spot gives more.
     private var helpLadder = HelpLadder()
 
+    // MARK: Writing "?" to ask
+
+    /// A "?" the person wrote, while the agent works on it: what it's about is boxed faintly.
+    var markedQuestion: MarkedQuestion?
+    @ObservationIgnored private var markCheck: Task<Void, Never>?
+
     // MARK: Visualizations (hovering over the page, top right)
 
     /// The cards are out, not tucked away. They only show while there's something to show. Saved with the note (not
@@ -315,8 +321,74 @@ final class CanvasModel {
     /// A stroke, erase or lasso move finished on a canvas.
     func canvasChanged(page pageID: UUID, drawing: PKDrawing) {
         guard let i = index(of: pageID), content.pages[i].drawing != drawing else { return }
+        let added = drawing.strokes.count > content.pages[i].drawing.strokes.count
         edit("Drawing", reload: false) { $0.pages[i].drawing = drawing }
         pageMapper.inkChanged(content.pages[i]) { [weak self] in self?.refreshPageMap(pageID) }
+        if added { lookForQuestionMark(on: pageID) }
+    }
+
+    /// The first time a note opens: how to ask without talking.
+    func introduceQuestionMark() {
+        let key = "questionMarkIntroduced"
+        guard !UserDefaults.standard.bool(forKey: key), banner == nil,
+              UserDefaults.standard.object(forKey: AppSettings.askWithQuestionMark) as? Bool ?? true else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        banner = .notice("Stuck? Write ? beside it, and the agent will help.")
+    }
+
+    /// The pencil touched the page again: what was being written isn't finished, so don't read it yet.
+    func penDown() {
+        markCheck?.cancel()
+    }
+
+    /// Once the pencil has rested, looks at what was just written: a "?" on its own asks the agent about what it's beside.
+    private func lookForQuestionMark(on pageID: UUID) {
+        markCheck?.cancel()
+        guard UserDefaults.standard.object(forKey: AppSettings.askWithQuestionMark) as? Bool ?? true else { return }
+        markCheck = Task { [weak self] in
+            try? await Task.sleep(for: QuestionMark.pause)
+            guard !Task.isCancelled, let self, self.agent == .idle, self.lasso == nil,
+                  let page = self.page(pageID) else { return }
+            let strokes = page.drawing.strokes
+            guard let cluster = QuestionMark.latestCluster(strokes) else { return }
+            let others = strokes.indices.filter { !cluster.indices.contains($0) }.map { strokes[$0].renderBounds }
+            guard QuestionMark.standsAlone(cluster.bounds, others: others) else { return }
+            let written = Array(strokes[cluster.indices])
+            var words: String?
+            if QuestionMark.looksLikeQuestionMark(written) {
+                words = ""
+            } else {
+                let reading = await Task.detached(priority: .userInitiated) {
+                    HandwritingReader.image(of: written).flatMap(HandwritingReader.read)
+                }.value
+                words = reading.flatMap { QuestionMark.question(in: $0.text) }
+            }
+            guard let words, !Task.isCancelled, self.agent == .idle,
+                  self.page(pageID)?.drawing.strokes.count == strokes.count else { return }
+            let snapshot = await self.pageMapper.snapshot(of: page, render: self.renderForPageMap)
+            guard !Task.isCancelled, self.agent == .idle else { return }
+            let subject = QuestionMark.subject(of: cluster.bounds, in: snapshot) ?? cluster.bounds
+            self.ask(about: MarkedQuestion(pageID: pageID, mark: cluster.bounds, subject: subject,
+                                           words: words.isEmpty ? nil : words))
+        }
+    }
+
+    /// Sends a written "?" to the agent: the faint box shows what it's about until the agent is done.
+    func ask(about question: MarkedQuestion) {
+        guard keysReady(voice: false) else { return }
+        withAnimation(.snappy) { markedQuestion = question }
+        showsKeyboard = false
+        reply = nil
+        banner = nil
+        movedToHistory = false
+        let action = LassoAction.marked(words: question.words)
+        let focus = LassoFocus(pageID: question.pageID, bounds: question.subject.union(question.mark), action: action,
+                               mark: question.mark)
+        say(action.request, spoken: false)
+        run { model in
+            defer { withAnimation(.easeOut(duration: 0.6)) { model.markedQuestion = nil } }
+            try await model.reply(speak: false, focus: focus)
+        }
     }
 
     /// Maps the page again (for the debug overlay) and, with the overlay on, saves it as a fixture.

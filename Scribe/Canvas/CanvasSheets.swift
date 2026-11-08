@@ -295,7 +295,7 @@ struct ConversationPanel: View {
         VStack(spacing: 0) {
             if items.isEmpty && model.agent == .idle {
                 ContentUnavailableView("No Conversation Yet", systemImage: "waveform",
-                                       description: Text("Tap the blue dot and talk. What you say, what the agent does on your page, and what it says back show up here."))
+                                       description: Text("Tap the blue dot and talk, or write ? beside anything you're stuck on. What you ask, what the agent does on your page, and what it says back show up here."))
                     .frame(maxHeight: .infinity)
             } else {
                 messages

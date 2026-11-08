@@ -179,7 +179,10 @@ struct CanvasView: View {
         // While an image is selected, a drag moves the image; while a page is zoomed, a drag pans it.
         .scrollDisabled(model.selectedImage != nil || model.pageZoomed)
         .scrollDismissesKeyboard(.interactively)
-        .onAppear { fitPages(size) }
+        .onAppear {
+            fitPages(size)
+            model.introduceQuestionMark()
+        }
         .onChange(of: size) { _, new in fitPages(new) }
         .onChange(of: model.content.pages.map(\.id)) { _, _ in fitPages(size) }
         .onChange(of: model.reloadToken) { _, _ in fitPages(size) }

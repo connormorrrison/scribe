@@ -8,6 +8,7 @@ enum AppSettings {
     static let pageBackground = "pageBackground"
     static let drawWithFinger = "drawWithFinger"
     static let helpStyle = "helpStyle"
+    static let askWithQuestionMark = "askWithQuestionMark"
 }
 
 /// How the agent helps when someone is stuck: works it through for them, or nudges them one step at a time.
