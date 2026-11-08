@@ -142,7 +142,9 @@ enum ActionValidator {
     }
 
     struct OutlineInput: Decodable {
-        var target: PageTarget
+        var target: PageTarget?
+        /// Several things traced as one mark (the parts of a continent, all the islands of a country).
+        var targets: [PageTarget]?
         var color: String?
         var fill: Bool?
         var label: String?
@@ -301,31 +303,86 @@ enum ActionValidator {
     // MARK: outline_region
 
     private static func outline(_ input: OutlineInput, _ c: inout ToolContext) throws -> ToolDecision {
-        let t = try resolve(input.target, c)
+        let wanted = (input.target.map { [$0] } ?? []) + (input.targets ?? [])
+        guard !wanted.isEmpty else { return .reject("give `target`, or `targets` for several") }
+        guard wanted.count <= 40 else { return .reject("at most 40 `targets` at once") }
+        let resolved = try wanted.map { try resolve($0, c) }
         let color = try parseColor(input.color)
         let page = c.pageRect
         var items: [AgentInk] = []
-        var traced = "its outline"
-        if t.outline == nil, let paths = t.paths?.filter({ $0.count >= 2 }), !paths.isEmpty {
-            // An open shape (a printed diagram, an answer line, their drawing): its own lines, exactly.
-            items = paths.map { .stroke(AgentStroke(points: $0.map { clamp($0, to: page) }, color: color)) }
-            traced = "\(paths.count) line\(paths.count == 1 ? "" : "s")"
-        } else {
-            let ring = (t.outline ?? AgentGeometry.roundedRect(t.bounds.insetBy(dx: -5, dy: -5), radius: 8)).map { clamp($0, to: page) }
-            items = [.stroke(AgentStroke(points: ring, color: color, closed: true, fill: input.fill == true ? 0.18 : nil))]
+        var traced: [String] = []
+        for t in resolved {
+            if t.outline == nil, let paths = t.paths?.filter({ $0.count >= 2 }), !paths.isEmpty {
+                // An open shape (a printed diagram, an answer line, their drawing): its own lines, exactly.
+                items += paths.map { .stroke(AgentStroke(points: $0.map { clamp($0, to: page) }, color: color)) }
+                traced.append("\(paths.count) line\(paths.count == 1 ? "" : "s") of \(t.objectID ?? "the target")")
+            } else {
+                let ring = (t.outline ?? AgentGeometry.roundedRect(t.bounds.insetBy(dx: -5, dy: -5), radius: 8)).map { clamp($0, to: page) }
+                items.append(.stroke(AgentStroke(points: ring, color: color, closed: true, fill: input.fill == true ? 0.18 : nil)))
+                traced.append((t.outline == nil ? "the box around " : "the outline of ") + (t.objectID ?? "the target"))
+            }
         }
+        let t = ResolvedTarget(bounds: resolved.map(\.bounds).reduce(CGRect.null) { $0.union($1) }, objectID: nil,
+                               snapped: false, note: resolved.map(\.note).joined(separator: "; "))
+        let ids = resolved.compactMap(\.objectID)
         var grow: CGFloat = 0
         let label = input.label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !label.isEmpty {
             let size = c.textSize(.label)
             let s = AgentGeometry.textSize(label, size: size)
-            let placed = place(CGSize(width: s.width + 8, height: s.height + 4), near: t.bounds, side: .right, &c)
-            grow = placed.grow
-            items.append(.text(AgentText(text: label, center: center(placed.rect), size: size, color: color)))
+            let box = CGSize(width: s.width + 8, height: s.height + 4)
+            // A part of a figure (a continent) is labelled on itself, like a map; anything else beside it.
+            let parts = resolved.filter { r in r.objectID.flatMap { c.map.object($0) }.map { ["part", "area"].contains($0.kind) } ?? false }
+            if let biggest = parts.max(by: { PageMap.area($0.bounds) < PageMap.area($1.bounds) }), let ring = biggest.outline,
+               let spot = labelSpot(box, inside: ring, c) {
+                items.append(.text(AgentText(text: label, center: center(spot), size: size, color: color)))
+                c.placed.append(spot)
+            } else {
+                let placed = place(box, near: t.bounds, side: .right, &c)
+                grow = placed.grow
+                items.append(.text(AgentText(text: label, center: center(placed.rect), size: size, color: color)))
+            }
         }
-        let mark = AgentMark(turn: c.turn, kind: "outline", text: label.isEmpty ? nil : label, target: t.objectID, items: items)
-        return ToolDecision(marks: [mark], growPage: grow, result: "ok, traced \(traced) of \(t.objectID ?? "the target")",
+        let mark = AgentMark(turn: c.turn, kind: "outline", text: label.isEmpty ? nil : label,
+                             target: ids.isEmpty ? nil : ids.joined(separator: "+"), items: items)
+        return ToolDecision(marks: [mark], growPage: grow, result: "ok, traced " + traced.joined(separator: ", "),
                             notes: [t.note])
+    }
+
+    /// Room for a label inside a shape: the spot nearest its middle where the whole label is inside the outline, off
+    /// printed text, their ink and the agent's other marks. Nil when it doesn't fit.
+    static func labelSpot(_ size: CGSize, inside ring: [CGPoint], _ c: ToolContext) -> CGRect? {
+        let b = FigureRegions.bounds(ring)
+        guard b.width > size.width, b.height > size.height else { return nil }
+        // The middle: the outline's centroid (by area), else the box's.
+        var a: CGFloat = 0, cx: CGFloat = 0, cy: CGFloat = 0
+        for i in ring.indices {
+            let p = ring[i], q = ring[(i + 1) % ring.count]
+            let k = p.x * q.y - q.x * p.y
+            a += k; cx += (p.x + q.x) * k; cy += (p.y + q.y) * k
+        }
+        let middle = abs(a) > 1 ? CGPoint(x: cx / (3 * a), y: cy / (3 * a)) : CGPoint(x: b.midX, y: b.midY)
+        let blockers = c.hardObstacles.map { $0.insetBy(dx: -3, dy: -3) } + c.placed
+        let step = max(4, min(b.width, b.height) / 24)
+        var best: (CGRect, CGFloat)?
+        var y = b.minY + size.height / 2
+        while y <= b.maxY - size.height / 2 {
+            var x = b.minX + size.width / 2
+            while x <= b.maxX - size.width / 2 {
+                let r = CGRect(x: x - size.width / 2, y: y - size.height / 2, width: size.width, height: size.height)
+                let d = hypot(x - middle.x, y - middle.y)
+                if d < (best?.1 ?? .infinity),
+                   [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.minX, y: r.maxY),
+                    CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.midX, y: r.maxY)]
+                    .allSatisfy({ PageMap.polygonContains(ring, $0) }),
+                   !blockers.contains(where: { $0.intersects(r) }) {
+                    best = (r, d)
+                }
+                x += step
+            }
+            y += step
+        }
+        return best?.0
     }
 
     // MARK: draw

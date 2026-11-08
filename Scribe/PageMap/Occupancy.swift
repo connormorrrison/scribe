@@ -255,7 +255,7 @@ enum PageLayout {
     static let answerBoxMax = CGSize(width: 320, height: 220)
 
     /// Printed kinds that sit inside something bigger, so they're never obstacles of their own.
-    static let nestedKinds: Set<String> = ["cell", "underline"]
+    static let nestedKinds: Set<String> = ["cell", "underline", "part", "area"]
 
     /// The occupancy grid and the free spaces for one snapshot.
     /// - image: the flattened page picture (paper, photos, the person's ink, the agent's marks), covering `pageSize`.

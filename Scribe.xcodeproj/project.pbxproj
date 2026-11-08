@@ -20,6 +20,7 @@
 		24E40CA6BA4B010023A41DA9 /* CanvasStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 342F06A17C09B5265B73A29A /* CanvasStore.swift */; };
 		2BE10B51CDEEDB29161327F4 /* AgentMarks.swift in Sources */ = {isa = PBXBuildFile; fileRef = D686A07E63EECBBFCE17A4F1 /* AgentMarks.swift */; };
 		2E0FA91583B2F773CBA9A34F /* three.min.js in Resources */ = {isa = PBXBuildFile; fileRef = 7B39758F5C68440C68C3EBC4 /* three.min.js */; };
+		31433E25B27162D5A7D27AF5 /* FigureRegions.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB71ECE7EFF4B8A23EC486BC /* FigureRegions.swift */; };
 		3620D56B4EE1B95ABF9979A0 /* AgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51DE719C0EA0A1DB6079F5AA /* AgentTools.swift */; };
 		36B1314359F7EF0935822D15 /* SpeechTimingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A02A59EDCEF98DF2BB89367 /* SpeechTimingTests.swift */; };
 		3B685F1084467D6DDEEF120E /* LandingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C746A923AB93043D4A2EF9ED /* LandingView.swift */; };
@@ -27,6 +28,7 @@
 		3F361F29058A0480D0BE6709 /* Caveat.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 4ED2E734490566000F0A1854 /* Caveat.ttf */; };
 		4214D285D681BBE5D2E0F794 /* DrawBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4330C89097BADA8BE9ED2A3 /* DrawBuilder.swift */; };
 		4328011C55575F587897CCF1 /* ActionValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE9152BE801B73965C240E0C /* ActionValidator.swift */; };
+		493C16A95A432A8CE9B786DF /* FigureRegionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76167C50A53417EBADFDC076 /* FigureRegionsTests.swift */; };
 		52FCCC00F01B9407405FFC55 /* DocumentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E7D00974B33FE33E399C2F9 /* DocumentsView.swift */; };
 		564A3D9845295142F79DC86F /* PageMapText.swift in Sources */ = {isa = PBXBuildFile; fileRef = C38C6ADF7BB7C275ED381183 /* PageMapText.swift */; };
 		5D4C67CE8E4DA61D198F3613 /* LibraryScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A3180D2749FBC4F034A65EB /* LibraryScreens.swift */; };
@@ -105,6 +107,7 @@
 		6BC1B0BA225CB4B010302BB5 /* PageMapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageMapTests.swift; sourceTree = "<group>"; };
 		6E02757CF6D844253B177DFB /* PageMapDebug.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageMapDebug.swift; sourceTree = "<group>"; };
 		72D4DA2A136290D59AA9E989 /* card.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = card.css; sourceTree = "<group>"; };
+		76167C50A53417EBADFDC076 /* FigureRegionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FigureRegionsTests.swift; sourceTree = "<group>"; };
 		76C3F842C2A4F07CB4378424 /* CanvasChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasChrome.swift; sourceTree = "<group>"; };
 		7B39758F5C68440C68C3EBC4 /* three.min.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = three.min.js; sourceTree = "<group>"; };
 		7D24505520B2FD84A084D195 /* ToolPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolPalette.swift; sourceTree = "<group>"; };
@@ -129,6 +132,7 @@
 		D686A07E63EECBBFCE17A4F1 /* AgentMarks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentMarks.swift; sourceTree = "<group>"; };
 		D772CDFF77CBA5D1CDEB22F7 /* CardSandbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardSandbox.swift; sourceTree = "<group>"; };
 		D8E9704FFA1FBFFBF3BFDFF3 /* STIXTwoText-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "STIXTwoText-OFL.txt"; sourceTree = "<group>"; };
+		DB71ECE7EFF4B8A23EC486BC /* FigureRegions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FigureRegions.swift; sourceTree = "<group>"; };
 		DCB4A46BA4A79B78AD1DEED9 /* VisualizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualizationTests.swift; sourceTree = "<group>"; };
 		E4DE0CB64DEF1532373596B3 /* Claude.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Claude.swift; sourceTree = "<group>"; };
 		E66F58B9DD78240A1F23C206 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -216,6 +220,7 @@
 			isa = PBXGroup;
 			children = (
 				40B2379145E73EF274E20C8D /* ClaudeReplyTests.swift */,
+				76167C50A53417EBADFDC076 /* FigureRegionsTests.swift */,
 				6BC1B0BA225CB4B010302BB5 /* PageMapTests.swift */,
 				6A02A59EDCEF98DF2BB89367 /* SpeechTimingTests.swift */,
 				C5F94F6A37B544CB63AE47FE /* StorageTests.swift */,
@@ -294,6 +299,7 @@
 		F4FBB62FF355768CBFA51AD6 /* PageMap */ = {
 			isa = PBXGroup;
 			children = (
+				DB71ECE7EFF4B8A23EC486BC /* FigureRegions.swift */,
 				21E68B607A923CF8BA432E68 /* InkObjects.swift */,
 				44E7505F3253923A53422794 /* Occupancy.swift */,
 				6E02757CF6D844253B177DFB /* PageMapDebug.swift */,
@@ -434,6 +440,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F3BA2924E6C21615251B3A88 /* ClaudeReplyTests.swift in Sources */,
+				493C16A95A432A8CE9B786DF /* FigureRegionsTests.swift in Sources */,
 				7BA2C69EBDCAEE717CE0437F /* PageMapTests.swift in Sources */,
 				36B1314359F7EF0935822D15 /* SpeechTimingTests.swift in Sources */,
 				C4CF9AFD09B05EFACFA9892B /* StorageTests.swift in Sources */,
@@ -462,6 +469,7 @@
 				52FCCC00F01B9407405FFC55 /* DocumentsView.swift in Sources */,
 				4214D285D681BBE5D2E0F794 /* DrawBuilder.swift in Sources */,
 				5ED894F2C4C5C05EE2B436F7 /* ElevenLabs.swift in Sources */,
+				31433E25B27162D5A7D27AF5 /* FigureRegions.swift in Sources */,
 				9199718A9F8D2DC1794E721C /* InkObjects.swift in Sources */,
 				9DD181BD50EBFDFE0C1C8FB4 /* LandingSupport.swift in Sources */,
 				3B685F1084467D6DDEEF120E /* LandingView.swift in Sources */,

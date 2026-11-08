@@ -25,6 +25,8 @@ final class PageMapper {
     /// When the agent last finished a turn on each page: ink drawn after it is tagged "new".
     @ObservationIgnored private var lastTurn: [UUID: TimeInterval] = [:]
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    /// Each figure's parts, by figure and where it sits (the paper doesn't change, so they're found once).
+    @ObservationIgnored private var regions: [String: [FigureRegions.Region]] = [:]
 
     /// Longest side of the picture sent to the agent, in pixels.
     static let maxImageSide: CGFloat = 1568
@@ -87,6 +89,7 @@ final class PageMapper {
             inkResult = inkObjects(page)
         }
         objects += photoObjects(page)
+        objects += await figureParts(page, objects, render: render)
         objects += inkResult.objects
         let marks = agentMarks(page)
         objects += marks.map { PageObject(id: $0.id, source: .agentInk, kind: $0.kind, text: $0.text, bounds: $0.bounds) }
@@ -176,6 +179,57 @@ final class PageMapper {
         page.images.enumerated().map { i, placed in
             PageObject(id: "photo_\(i + 1)", source: .printed, kind: "photo", bounds: placed.bounds)
         }
+    }
+
+    // MARK: Figures, split into their parts
+
+    /// Figures (`img_N`, `photo_N`, printed drawings) worth splitting.
+    static func figures(_ objects: [PageObject]) -> [PageObject] {
+        objects.filter { o in
+            o.source == .printed && o.parent == nil && ["figure", "photo", "drawing"].contains(o.kind)
+                && o.bounds.width >= FigureRegions.minFigureSide && o.bounds.height >= FigureRegions.minFigureSide
+        }
+    }
+
+    /// The parts of each figure (`img_1.p3`) and their coloured areas (`img_1.p3.a2`), traced from the paper alone
+    /// (no ink or marks), so the agent can point at one continent of a map and the app can trace it exactly.
+    private func figureParts(_ page: NotePage, _ objects: [PageObject],
+                             render: (NotePage, CGFloat) -> UIImage?) async -> [PageObject] {
+        let figures = Self.figures(objects)
+        guard !figures.isEmpty else { return [] }
+        func key(_ o: PageObject) -> String {
+            let photo = o.kind == "photo" ? page.images.first { $0.bounds == o.bounds }?.fileName ?? "" : ""
+            return "\(page.pdfPage ?? -1)|\(photo)|\(o.kind)|\(PageMap.format(o.bounds))"
+        }
+        let missing = figures.filter { regions[key($0)] == nil }
+        if !missing.isEmpty {
+            var paper = page
+            paper.drawing = PKDrawing()
+            paper.agentDrawing = PKDrawing()
+            paper.agentMarks = []
+            paper.cards = []
+            let scale = FigureRegions.maxScale
+            if let picture = render(paper, scale)?.cgImage {
+                let boxes = missing.map(\.bounds)
+                let found = await Task.detached(priority: .userInitiated) {
+                    boxes.map { FigureRegions.regions(in: picture, scale: scale, figure: $0) }
+                }.value
+                for (o, r) in zip(missing, found) { regions[key(o)] = r }
+            }
+        }
+        var out: [PageObject] = []
+        for figure in figures {
+            for (k, part) in (regions[key(figure)] ?? []).enumerated() {
+                let id = "\(figure.id).p\(k + 1)"
+                out.append(PageObject(id: id, source: .printed, kind: "part", text: part.color, bounds: part.bounds,
+                                      outline: part.outline, parent: figure.id))
+                for (j, area) in part.areas.enumerated() {
+                    out.append(PageObject(id: "\(id).a\(j + 1)", source: .printed, kind: "area", text: area.color,
+                                          bounds: area.bounds, outline: area.outline, parent: id))
+                }
+            }
+        }
+        return out
     }
 
     // MARK: The person's ink

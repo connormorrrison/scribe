@@ -19,8 +19,10 @@ enum PageMapText {
         } else {
             out.append("OBJECTS (id · what · x,y,w,h in pt):")
             let idWidth = min(12, listed.rows.map(\.id.count).max() ?? 6)
+            let parts = Dictionary(grouping: s.objects.filter { $0.kind == "part" || $0.kind == "area" }, by: { $0.parent ?? "" })
             for o in listed.rows {
                 out.append("\(pad(o.id, idWidth)) \(pad(describe(o), 46)) \(PageMap.format(o.bounds))")
+                out.append(contentsOf: partLines(of: o, parts))
             }
         }
         out.append(contentsOf: listed.notes)
@@ -67,7 +69,9 @@ enum PageMapText {
             switch o.source {
             case .pdfText: return o.kind != "word"
             // Table cells are listed only for small tables; bigger ones say how to name a cell.
-            case .printed: return o.kind != "cell" || smallTable(o.parent, s)
+            case .printed:
+                if o.kind == "part" || o.kind == "area" { return false } // Listed under their figure.
+                return o.kind != "cell" || smallTable(o.parent, s)
             case .studentInk: return true
             case .agentInk, .card: return false // Their own sections.
             }
@@ -103,6 +107,23 @@ enum PageMapText {
     private static func smallTable(_ parent: String?, _ s: PageMapSnapshot) -> Bool {
         guard let parent else { return true }
         return s.objects.filter { $0.parent == parent && $0.kind == "cell" }.count <= listedCellsMax
+    }
+
+    /// A figure's parts, a few to a line: "  parts: p1 green 60,300,210,180 · p2 …", then any part's coloured areas.
+    static func partLines(of figure: PageObject, _ parts: [String: [PageObject]]) -> [String] {
+        guard let mine = parts[figure.id], !mine.isEmpty else { return [] }
+        func short(_ o: PageObject, in parent: String) -> String {
+            String(o.id.dropFirst(parent.count + 1)) + " " + (o.text ?? "") + " " + PageMap.format(o.bounds)
+        }
+        var out = ["    parts of \(figure.id) (each ·traceable, id \(figure.id).pN):"]
+        for chunk in stride(from: 0, to: mine.count, by: 4) {
+            out.append("    " + mine[chunk..<min(chunk + 4, mine.count)].map { short($0, in: figure.id) }.joined(separator: " · "))
+        }
+        for part in mine {
+            guard let areas = parts[part.id], !areas.isEmpty else { continue }
+            out.append("    areas of \(part.id): " + areas.map { short($0, in: part.id) }.joined(separator: " · "))
+        }
+        return out
     }
 
     // MARK: Formatting

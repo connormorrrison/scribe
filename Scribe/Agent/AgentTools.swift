@@ -14,7 +14,7 @@ enum AgentTools {
 
     static let target: JSONValue = [
         "type": "object",
-        "description": "Something on the page. Prefer an id from the page map: {\"id\":\"ink_7\"}. A word inside a printed line or handwriting: {\"id\":\"txt_3\",\"match\":\"continents\"}. A free space: {\"id\":\"free_2\"}. Only when nothing in the map fits, raw page points: {\"box\":[x,y,w,h]} or {\"point\":[x,y]}.",
+        "description": "Something on the page. Prefer an id from the page map: {\"id\":\"ink_7\"}. A part of a figure (a continent of a map, a piece of a diagram): {\"id\":\"img_1.p3\"}, or a coloured area inside it: {\"id\":\"img_1.p3.a2\"}. A word inside a printed line or handwriting: {\"id\":\"txt_3\",\"match\":\"continents\"}. A free space: {\"id\":\"free_2\"}. Only when nothing in the map fits, raw page points: {\"box\":[x,y,w,h]} or {\"point\":[x,y]}.",
         "properties": [
             "id": ["type": "string"],
             "match": ["type": "string"],
@@ -75,18 +75,25 @@ enum AgentTools {
              required: ["kind"]),
 
         Tool(name: "outline_region", description: """
-            Trace something on the page exactly, in colour: a printed diagram, an answer line, a box or table cell, \
-            or their own drawing. Objects marked ·traceable in the page map have their real lines, and the app follows \
-            them; anything else is outlined around its box. Optionally fill it lightly and add a short label. \
-            Example: {"target": {"id": "vec_4"}, "color": "orange", "fill": true, "label": "the triangle"}
+            Trace something on the page exactly, in colour: one part of a figure (a continent on a map, an organ in a \
+            diagram), a printed diagram, an answer line, a box or table cell, or their own drawing. Objects marked \
+            ·traceable have their real outline or lines, and the app follows them to within half a point; anything else \
+            is outlined around its box. Figures are split into parts (`img_1.p1…`, listed under the figure with colour \
+            and box) and parts into coloured areas (`img_1.p1.a1…`). Look at the picture to decide which part is which, \
+            then trace by id. Several at once (a continent and its islands) go in `targets`; give each its own call \
+            when each needs its own colour or label. A label on a figure's part goes on the part itself, so pick a colour \
+            that stands out against it (each part is listed with its colour). Optionally fill it lightly. \
+            Examples: {"target": {"id": "vec_4"}, "color": "orange", "fill": true, "label": "the triangle"} · \
+            {"targets": [{"id": "img_1.p2"}, {"id": "img_1.p9"}], "color": "green", "label": "africa"}
             """,
              properties: [
                 "target": target,
+                "targets": ["type": "array", "items": target, "maxItems": 40],
                 "color": color,
                 "fill": ["type": "boolean"],
                 "label": ["type": "string", "description": "A short name, written beside it."],
              ],
-             required: ["target"]),
+             required: []),
 
         Tool(name: "draw", description: """
             Draw a simple picture in your ink, like a tutor at a whiteboard: a labelled diagram of 3–6 parts, a process \
@@ -162,7 +169,7 @@ enum AgentTools {
         a turn, and say a line about what you drew. \
         Always target things by their id from the page map. Never guess coordinates from the picture: every object has \
         exact bounds. To write in empty space, use near {"id": "free_N"}. Use outline_region on a ·traceable object to \
-        trace its real lines. Each result says where your mark went; if it says something was moved, that's fine.
+        trace its real lines; figures like maps are split into parts you can trace one by one. Each result says where your mark went; if it says something was moved, that's fine.
         """
 }
 

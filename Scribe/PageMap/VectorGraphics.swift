@@ -90,7 +90,7 @@ enum PDFContentScanner {
         var truncated = false
     }
 
-    static let maxPaths = 6000
+    static let maxPaths = 20000
     static let maxFormDepth = 8
 
     fileprivate final class State {
@@ -366,7 +366,7 @@ enum PDFContentScanner {
 /// Each carries its exact geometry: `outline` for closed shapes, `paths` for open ones.
 enum VectorShapes {
     static let maxDrawings = 40
-    static let maxPathPoints = 400
+    static let maxPathPoints = 6000
 
     struct Piece {
         enum Kind { case hLine, vLine, rect, other }
@@ -458,7 +458,7 @@ enum VectorShapes {
             var paths: [[CGPoint]] = []
             var budget = maxPathPoints
             for i in comp.sorted(by: { pieces[$0].bounds.minY < pieces[$1].bounds.minY }) where budget > 2 {
-                let simple = Array(Simplify.rdp(pieces[i].points, 0.6 * scale).prefix(budget))
+                let simple = Array(Simplify.rdp(pieces[i].points, 0.3 * scale).prefix(budget))
                 budget -= simple.count
                 paths.append(simple)
             }
