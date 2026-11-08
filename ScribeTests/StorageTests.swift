@@ -19,6 +19,24 @@ final class StorageTests: XCTestCase {
 
     private func relaunchedStore() -> CanvasStore { CanvasStore(directory: root) }
 
+    /// The conversation with the agent is saved with the note, and notes saved before it existed still open.
+    func testConversationIsSavedAndOlderNotesStillOpen() throws {
+        let file = NoteFile(directory: root.appendingPathComponent("note"))
+        var content = NoteContent()
+        content.conversation = [ConversationTurn(speaker: .you, text: "What's a monad?", spoken: true),
+                                ConversationTurn(speaker: .agent, text: "A way to chain steps.", spoken: true)]
+        XCTAssertTrue(file.save(content))
+        XCTAssertEqual(file.load().conversation, content.conversation)
+
+        var json = try JSONSerialization.jsonObject(with: Data(contentsOf: file.contentURL!)) as! [String: Any]
+        json["conversation"] = nil
+        try JSONSerialization.data(withJSONObject: json).write(to: file.contentURL!)
+        let older = file.read()
+        XCTAssertTrue(older.fromDisk)
+        XCTAssertEqual(older.content.pages.count, content.pages.count)
+        XCTAssertTrue(older.content.conversation.isEmpty)
+    }
+
     // MARK: Library
 
     func testLibraryChangesSurviveRelaunch() throws {

@@ -112,12 +112,36 @@ struct HistoryEntry: Identifiable, Codable, Equatable {
     var text: String
 }
 
+/// One message in the conversation with the agent: something the person said (or typed), or the agent's reply.
+struct ConversationTurn: Identifiable, Codable, Equatable {
+    enum Speaker: String, Codable { case you, agent }
+
+    var id = UUID()
+    var date = Date()
+    var speaker: Speaker
+    var text: String
+    /// Said out loud (the person's speech, or a reply the agent spoke), rather than typed.
+    var spoken: Bool
+}
+
 /// Everything saved for a note.
 struct NoteContent: Codable, Equatable {
     var pages: [NotePage] = [NotePage()]
     /// nil follows the Pages setting.
     var background: PageBackground?
     var history: [HistoryEntry] = []
+    var conversation: [ConversationTurn] = []
+}
+
+extension NoteContent {
+    /// Fields added after the first release are optional, so older notes still open.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        pages = try c.decode([NotePage].self, forKey: .pages)
+        background = try c.decodeIfPresent(PageBackground.self, forKey: .background)
+        history = try c.decodeIfPresent([HistoryEntry].self, forKey: .history) ?? []
+        conversation = try c.decodeIfPresent([ConversationTurn].self, forKey: .conversation) ?? []
+    }
 }
 
 extension PageBackground: Codable {}

@@ -18,6 +18,7 @@ targets:
       path: Scribe/Info.plist
       properties:
         UIAppFonts: [Caveat.ttf]
+        NSMicrophoneUsageDescription: Scribe listens when you tap the agent, so you can talk to it instead of typing.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.connormorrison.scribe

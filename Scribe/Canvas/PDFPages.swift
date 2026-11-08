@@ -121,14 +121,19 @@ struct PDFPageView: View {
     }
 }
 
-/// A PDF page on the desk: shown whole, centred between the top and bottom controls, and zoomable. Pinch (1x to 4x)
-/// or double-tap with fingers; pan with one finger while zoomed. The Pencil always draws.
-struct ZoomablePDFPage: View {
+/// A page on screen, zoomable: pinch (1x to 4x) or double-tap with fingers; pan with one finger while zoomed. The
+/// Pencil always draws.
+///
+/// A PDF page sits on the desk, shown whole between the top and bottom controls. A blank page fills the screen edge
+/// to edge (a page written in the other orientation is taller, and scrolls up and down).
+struct ZoomablePage: View {
     let model: CanvasModel
     let page: NotePage
     let size: CGSize
     let background: PageBackground
     let drawWithFinger: Bool
+
+    private var onDesk: Bool { page.pdfPage != nil }
 
     /// Zoom after the last pinch, 1 = the whole page fits.
     @State private var zoom: CGFloat = 1
@@ -148,6 +153,7 @@ struct ZoomablePDFPage: View {
 
     /// The page's width when it fits.
     private var fitWidth: CGFloat {
+        guard onDesk else { return max(1, size.width) }
         let available = CGSize(width: size.width - 2 * Self.side, height: size.height - Self.top - Self.bottom)
         return max(1, min(available.width, available.height * NotePageMetrics.width / page.height))
     }
@@ -160,18 +166,20 @@ struct ZoomablePDFPage: View {
             PageView(model: model, page: page, width: width, background: background, drawWithFinger: drawWithFinger,
                      zoom: gestures)
                 .scaleEffect(pinch, anchor: UnitPoint(x: anchor.x / max(width, 1), y: anchor.y / max(height, 1)))
-                .shadow(color: .black.opacity(0.06), radius: 12, y: 8)
-                .shadow(color: .black.opacity(0.12), radius: 1.5, y: 1)
-                .padding(.horizontal, Self.side)
-                .padding(.top, Self.top)
-                .padding(.bottom, Self.bottom)
-                .frame(minWidth: size.width, minHeight: size.height)
+                .shadow(color: .black.opacity(onDesk ? 0.06 : 0), radius: 12, y: 8)
+                .shadow(color: .black.opacity(onDesk ? 0.12 : 0), radius: 1.5, y: 1)
+                .padding(.horizontal, onDesk ? Self.side : 0)
+                .padding(.top, onDesk ? Self.top : 0)
+                .padding(.bottom, onDesk ? Self.bottom : 0)
+                .frame(minWidth: size.width, minHeight: size.height, alignment: onDesk ? .center : .top)
         }
         .scrollPosition($position)
         .onScrollGeometryChange(for: CGPoint.self) { $0.contentOffset } action: { _, new in offset = new }
         .scrollIndicators(.hidden)
-        // Overrides the pager's setting: this page pans only while zoomed, and not while an image is being edited.
-        .scrollDisabled(zoom <= 1 || model.selectedImage != nil)
+        .scrollBounceBehavior(.basedOnSize)
+        // Overrides the pager's setting: this page pans only while zoomed (or taller than the screen), and not while
+        // an image is being edited.
+        .scrollDisabled((zoom <= 1 && height <= size.height + 0.5) || model.selectedImage != nil)
         .onChange(of: zoom) { _, new in model.pageZoomed = new > 1 }
         .onDisappear {
             if zoom > 1 { zoom = 1; model.pageZoomed = false }

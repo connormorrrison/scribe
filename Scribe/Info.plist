@@ -18,6 +18,8 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Scribe listens when you tap the agent, so you can talk to it instead of typing.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Caveat.ttf</string>

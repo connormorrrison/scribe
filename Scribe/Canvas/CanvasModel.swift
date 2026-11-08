@@ -3,7 +3,7 @@ import SwiftUI
 
 /// What the agent is doing, shown by the agent control.
 enum AgentState: Equatable {
-    case idle, listening, thinking
+    case idle, listening, thinking, speaking
 }
 
 /// A banner just under the top row.
@@ -145,7 +145,8 @@ final class CanvasModel {
         undoManager.registerUndo(withTarget: self) { model in
             let current = model.content
             var restored = snapshot
-            restored.history = current.history // History isn't undone.
+            restored.history = current.history // History and the conversation aren't undone.
+            restored.conversation = current.conversation
             model.content = restored
             model.reloadToken += 1
             model.registerUndo(name, restoring: current)
@@ -467,35 +468,49 @@ final class CanvasModel {
 
     // MARK: Agent
 
-    /// The agent control: starts talking, or stops whatever the agent is doing.
     /// One line for the agent bar while the agent listens or works.
     var agentLine: String {
         switch agent {
         case .idle: ""
         case .listening: "Listening…"
         case .thinking: "Thinking…"
+        case .speaking: "Speaking…"
         }
     }
 
-    func stopAgent() { agent = .idle }
+    @ObservationIgnored private let voice = VoiceIO()
+    @ObservationIgnored private var agentTask: Task<Void, Never>?
 
+    /// Stops listening, thinking or speaking. Anything already said stays in the conversation.
+    func stopAgent() {
+        agentTask?.cancel()
+        agentTask = nil
+        voice.stopPlayback()
+        agent = .idle
+    }
+
+    /// The agent control: starts listening; while listening, sends what was said straight away; otherwise stops.
     func toggleAgent() {
-        if agent != .idle {
-            agent = .idle
-            return
+        switch agent {
+        case .idle:
+            guard keysReady() else { return }
+            banner = nil
+            listen()
+        case .listening:
+            voice.finish()
+        case .thinking, .speaking:
+            stopAgent()
         }
-        guard keysReady() else { return }
-        banner = nil
-        agent = .listening
     }
 
-    /// Sends what was typed to the agent.
+    /// Sends what was typed to the agent. It answers in text, without speaking.
     func send(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, keysReady(voice: false) else { return }
         showsKeyboard = false
-        log(text)
-        changed()
+        banner = nil
+        say(text, spoken: false)
+        run { model in try await model.reply(speak: false) }
     }
 
     func choose(_ option: String) {
@@ -504,9 +519,119 @@ final class CanvasModel {
         changed()
     }
 
+    /// After an error: answers what was last said if it never got a reply, or starts listening again.
     func retry() {
         banner = nil
-        toggleAgent()
+        if let last = content.conversation.last, last.speaker == .you {
+            guard keysReady(voice: last.spoken) else { return }
+            run { model in try await model.reply(speak: last.spoken) }
+        } else {
+            toggleAgent()
+        }
+    }
+
+    /// Speaks one of the agent's replies again.
+    func replay(_ turn: ConversationTurn) {
+        guard turn.speaker == .agent, keysReady() else { return }
+        run { model in try await model.speak(turn.text) }
+    }
+
+    /// Voice to text (ElevenLabs), then the agent's reply (Claude), then text to voice (ElevenLabs).
+    private func listen() {
+        run { model in
+            guard await VoiceIO.microphoneAllowed() else {
+                model.banner = .error("Scribe can't hear you. Allow the microphone in Settings › Privacy & Security › Microphone.")
+                return
+            }
+            guard let voiceKey = ElevenLabsClient() else { return }
+            model.agent = .listening
+            guard let recording = try await model.voice.record() else { return }
+            defer { try? FileManager.default.removeItem(at: recording) }
+            model.agent = .thinking
+            let said = try await voiceKey.transcribe(recording)
+            try Task.checkCancellation()
+            guard !said.isEmpty else {
+                model.banner = .notice("The agent didn't catch that. Tap the dot and try again.")
+                return
+            }
+            model.say(said, spoken: true)
+            try await model.reply(speak: true)
+        }
+    }
+
+    /// Runs one piece of agent work, replacing any before it. Errors become a banner; the agent ends idle.
+    private func run(_ work: @escaping @MainActor (CanvasModel) async throws -> Void) {
+        agentTask?.cancel()
+        voice.stopPlayback()
+        agentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await work(self)
+            } catch {
+                if !Task.isCancelled, !(error is CancellationError) {
+                    self.banner = .error(error.localizedDescription)
+                }
+            }
+            guard !Task.isCancelled else { return }
+            self.agent = .idle
+            self.voice.deactivate()
+        }
+    }
+
+    /// Asks Claude to answer the conversation so far, adds the answer, and speaks it if asked.
+    private func reply(speak: Bool) async throws {
+        guard let claude = ClaudeClient() else { return }
+        agent = .thinking
+        let answer = try await claude.send(Self.messages(for: content.conversation),
+                                           system: Self.agentPrompt(title: document.title),
+                                           maxTokens: 1024, effort: .low)
+            .text.trimmingCharacters(in: .whitespacesAndNewlines)
+        try Task.checkCancellation()
+        guard !answer.isEmpty else { return }
+        content.conversation.append(ConversationTurn(speaker: .agent, text: answer, spoken: speak))
+        changed()
+        if speak { try await self.speak(answer) }
+    }
+
+    private func speak(_ text: String) async throws {
+        guard let voiceKey = ElevenLabsClient() else { return }
+        agent = .thinking
+        let audio = try await voiceKey.speak(text)
+        try Task.checkCancellation()
+        agent = .speaking
+        try await voice.play(audio)
+    }
+
+    /// Adds what the person said or typed to the conversation.
+    private func say(_ text: String, spoken: Bool) {
+        content.conversation.append(ConversationTurn(speaker: .you, text: text, spoken: spoken))
+        changed()
+    }
+
+    /// The recent conversation as Messages API turns, with neighbouring turns by the same speaker joined, starting
+    /// with the person.
+    private static func messages(for conversation: [ConversationTurn]) -> [ClaudeClient.Message] {
+        var messages: [ClaudeClient.Message] = []
+        for turn in conversation.suffix(40) {
+            let role: ClaudeClient.Message.Role = turn.speaker == .you ? .user : .assistant
+            if let last = messages.last, last.role == role {
+                messages[messages.count - 1] = .init(role: role, content: last.content + "\n\n" + turn.text)
+            } else if !(messages.isEmpty && role == .assistant) {
+                messages.append(.init(role: role, content: turn.text))
+            }
+        }
+        return messages
+    }
+
+    private static func agentPrompt(title: String) -> String {
+        let note = title.isEmpty ? "a note" : "the note “\(title)”"
+        return """
+        You are the agent inside Scribe, an iPad notebook. The person is working in \(note) and talking to you, \
+        usually out loud: their words reach you through speech recognition, so read past small transcription \
+        mistakes. Your replies may be read aloud by a text-to-speech voice, so write plain conversational \
+        sentences: no markdown, lists, headings, code, emoji or links. Be brief, usually one to three sentences, \
+        unless they ask for more. You can't see or change their pages yet, so don't claim to.
+        """
     }
 
     /// Shows an error banner if a needed key is missing.

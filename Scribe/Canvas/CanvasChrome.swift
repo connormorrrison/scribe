@@ -119,7 +119,7 @@ struct AgentControl: View {
     var body: some View {
         HStack(spacing: 0) {
             HStack(spacing: 0) {
-                AgentOrb(listening: state == .listening, reduceMotion: reduceMotion)
+                AgentOrb(listening: state == .listening || state == .speaking, reduceMotion: reduceMotion)
                     .frame(width: CanvasChromeMetrics.button, height: CanvasChromeMetrics.button)
                     .modifier(OrbGather(trigger: mode, reduceMotion: reduceMotion))
                 if expanded && !typing {
@@ -142,7 +142,8 @@ struct AgentControl: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(state == .idle ? "Talk to the agent" : model.agentLine)
             .accessibilityAddTraits([.isButton, .updatesFrequently])
-            .accessibilityHint(state == .idle ? "Touch and hold for more options" : "")
+            .accessibilityHint(state == .idle ? "Touch and hold for more options"
+                               : state == .listening ? "Double-tap when you're done talking" : "Double-tap to stop")
 
             if typing {
                 typeField

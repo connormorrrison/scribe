@@ -231,39 +231,138 @@ struct PageThumbnail: View {
     }
 }
 
-// MARK: - History
+// MARK: - Conversation
 
+/// History, from More: presented like Settings, as a sheet with Done.
 struct HistorySheet: View {
-    let entries: [HistoryEntry]
+    let model: CanvasModel
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
-            Group {
-                if entries.isEmpty {
-                    ContentUnavailableView("No History Yet", systemImage: "clock.arrow.circlepath",
-                                           description: Text("What you and the agent do in this note shows up here."))
-                } else {
-                    List(entries.reversed()) { entry in
-                        HStack(alignment: .firstTextBaseline, spacing: 12) {
-                            Image(systemName: entry.author == .agent ? "sparkles" : "person.fill")
-                                .foregroundStyle(entry.author == .agent ? Landing.blue : .secondary)
-                                .frame(width: 20)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(entry.text)
-                                Text(entry.date, format: .relative(presentation: .named))
-                                    .font(.system(size: 13, weight: .regular, design: .rounded))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+            ConversationPanel(model: model)
+                .navigationTitle("History")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
                 }
-            }
-            .roundedTitle("History", inline: true)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+        }
+    }
+}
+
+/// The conversation with the agent: what you said on the right, the agent's replies on the left, newest at the
+/// bottom.
+struct ConversationPanel: View {
+    let model: CanvasModel
+
+    private var turns: [ConversationTurn] { model.content.conversation }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if turns.isEmpty && model.agent == .idle {
+                ContentUnavailableView("No Conversation Yet", systemImage: "waveform",
+                                       description: Text("Tap the blue dot and talk. What you say and what the agent says back show up here."))
+                    .frame(maxHeight: .infinity)
+            } else {
+                messages
             }
         }
+        .padding(.top, 8)
+    }
+
+    private var messages: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    ForEach(turns) { turn in
+                        ConversationBubble(turn: turn, replay: { model.replay(turn) })
+                            .id(turn.id)
+                    }
+                    if model.agent != .idle {
+                        AgentStatusBubble(state: model.agent)
+                            .id(Self.statusID)
+                            .transition(.opacity)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 16)
+                .animation(.snappy, value: turns.count)
+                .animation(.easeInOut(duration: 0.2), value: model.agent)
+            }
+            .scrollIndicators(.hidden)
+            .defaultScrollAnchor(.bottom)
+            .onChange(of: turns.count) { _, _ in scrollToEnd(proxy) }
+            .onChange(of: model.agent) { _, _ in scrollToEnd(proxy) }
+        }
+    }
+
+    private static let statusID = "status"
+
+    private func scrollToEnd(_ proxy: ScrollViewProxy) {
+        withAnimation(.snappy) {
+            if model.agent != .idle {
+                proxy.scrollTo(Self.statusID, anchor: .bottom)
+            } else if let last = turns.last {
+                proxy.scrollTo(last.id, anchor: .bottom)
+            }
+        }
+    }
+}
+
+/// One message. Yours is blue on the right; the agent's is gray on the left.
+private struct ConversationBubble: View {
+    let turn: ConversationTurn
+    let replay: () -> Void
+
+    private var mine: Bool { turn.speaker == .you }
+
+    var body: some View {
+        VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
+            Text(turn.text)
+                .font(.system(size: 16, weight: .regular, design: .rounded))
+                .foregroundStyle(mine ? Color.white : Color.primary)
+                .textSelection(.enabled)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(mine ? Landing.blue : Color(.secondarySystemFill),
+                            in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .contextMenu {
+                    Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = turn.text }
+                    if !mine { Button("Play Again", systemImage: "speaker.wave.2", action: replay) }
+                }
+
+            HStack(spacing: 4) {
+                if turn.spoken { Image(systemName: mine ? "mic.fill" : "speaker.wave.2.fill") }
+                Text(turn.date, format: .dateTime.hour().minute())
+            }
+            .font(.system(size: 12, weight: .regular, design: .rounded))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+        }
+        .frame(maxWidth: 300, alignment: mine ? .trailing : .leading)
+        .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(mine ? "You" : "Agent"): \(turn.text)")
+    }
+}
+
+/// What the agent is doing right now, at the end of the conversation.
+private struct AgentStatusBubble: View {
+    let state: AgentState
+
+    var body: some View {
+        let mine = state == .listening
+        HStack(spacing: 8) {
+            Image(systemName: mine ? "mic.fill" : (state == .speaking ? "speaker.wave.2.fill" : "ellipsis"))
+                .symbolEffect(.variableColor.iterative, isActive: true)
+            Text(state == .listening ? "Listening…" : state == .speaking ? "Speaking…" : "Thinking…")
+        }
+        .font(.system(size: 15, weight: .regular, design: .rounded))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
     }
 }
 

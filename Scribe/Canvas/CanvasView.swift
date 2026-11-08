@@ -22,7 +22,10 @@ struct CanvasView: View {
     @AppStorage(AppSettings.drawWithFinger) private var drawWithFinger = false
 
     @State private var showsPages = false
-    @State private var showsHistory = false
+    @State private var showsConversation = false
+    /// The More menu is open: everything else stops taking taps (it stays in view), so a tap meant for the menu can't land on a button or the
+    /// page behind it.
+    @State private var showsMore = false
     @State private var showsSettings = false
     @State private var showsPhotos = false
     @State private var showsFiles = false
@@ -45,6 +48,7 @@ struct CanvasView: View {
                 pages(size: geo.size)
             }
             .ignoresSafeArea()
+            .allowsHitTesting(!showsMore)
 
             VStack(spacing: 0) {
                 topEdge
@@ -55,8 +59,10 @@ struct CanvasView: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
                 bottomEdge
+                    .steppingBack(showsMore)
             }
         }
+        .animation(.easeOut(duration: 0.2), value: showsMore)
         .animation(.easeOut(duration: 0.25), value: showsPageLabel)
         .task(id: model.currentPageID) { await flashPageLabel() }
         .background(Color.white.ignoresSafeArea())
@@ -65,10 +71,12 @@ struct CanvasView: View {
         // Turning the page puts the selected image down.
         .onChange(of: model.currentPageID) { _, _ in model.selectedImage = nil }
         .animation(.snappy, value: model.showsKeyboard)
-        .sheet(isPresented: $showsHistory) { HistorySheet(entries: model.content.history) }
-        .sheet(isPresented: $showsSettings) { SettingsSheet() }
-        .sheet(item: $shareURL) { url in ShareSheet(items: [url]) }
         .fullScreenCover(item: $model.enlargedCard) { card in EnlargedCard(model: model, card: card) }
+        // Each sheet sits on its own view: several presenters on one view pick up each other's taps, and only one of
+        // them works. History, like Settings beside it in More, is a sheet with Done.
+        .background { Color.clear.sheet(isPresented: $showsSettings) { SettingsSheet() } }
+        .background { Color.clear.sheet(isPresented: $showsConversation) { HistorySheet(model: model) } }
+        .background { Color.clear.sheet(item: $shareURL) { url in ShareSheet(items: [url]) } }
         // The photo picker, the Files picker and the PDF exporter each sit on their own view: on one view, the last
         // of them wins and the others never appear.
         .background {
@@ -95,10 +103,14 @@ struct CanvasView: View {
             photoItem = nil
             Task { placeImage(try? await item.loadTransferable(type: Data.self)) }
         }
-        .onDisappear { model.saveNow() }
+        .onDisappear {
+            model.stopAgent()
+            model.saveNow()
+        }
         // Leaving the app (or the app switcher) saves straight away: iOS may end the app without warning after.
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { model.saveNow() }
+            if phase == .background { model.stopAgent() }
         }
     }
 
@@ -121,6 +133,7 @@ struct CanvasView: View {
         }
         .scrollTargetBehavior(.viewAligned(limitBehavior: .alwaysByOne))
         .scrollIndicators(.hidden)
+        .ignoresSafeArea()
         .background(Color(.systemGray5))
         .scrollPosition(id: pagePosition)
         // While a photo is being placed, a drag moves the photo.
@@ -133,20 +146,16 @@ struct CanvasView: View {
         .onChange(of: model.reloadToken) { _, _ in fitPages(size) }
     }
 
-    /// A blank page is paper edge to edge. A PDF page keeps its shape and is shown whole on the desk, and zooms.
+    /// A blank page is paper edge to edge. A PDF page keeps its shape and is shown whole on the desk. Both zoom.
     @ViewBuilder
     private func pageView(_ page: NotePage, size: CGSize) -> some View {
-        if page.pdfPage != nil {
-            ZoomablePDFPage(model: model, page: page, size: size, background: background,
-                            drawWithFinger: drawWithFinger)
+        let zoomable = ZoomablePage(model: model, page: page, size: size, background: background,
+                                    drawWithFinger: drawWithFinger)
+        if page.pdfPage == nil {
+            // Edge to edge: without this the scroll view leaves room for the status bar, and the page starts below it.
+            zoomable.ignoresSafeArea()
         } else {
-            ScrollView(.vertical) {
-                PageView(model: model, page: page, width: size.width, background: background,
-                         drawWithFinger: drawWithFinger)
-            }
-            // Only a page written in another orientation is taller than the screen, and only then scrolls.
-            .scrollBounceBehavior(.basedOnSize)
-            .scrollIndicators(.hidden)
+            zoomable
         }
     }
 
@@ -200,6 +209,7 @@ struct CanvasView: View {
                 HStack(alignment: .center, spacing: CanvasChromeMetrics.groupGap) {
                     ChromeButton(title: "Back", symbol: "chevron.backward", action: onBack)
                         .canvasChrome(Capsule())
+                        .steppingBack(showsMore)
                     Spacer()
                     HStack(spacing: 0) {
                         ChromeButton(title: "Undo", symbol: "arrow.uturn.backward", disabled: !model.canUndo) {
@@ -211,9 +221,11 @@ struct CanvasView: View {
                     }
                     .padding(.horizontal, 4)
                     .canvasChrome(Capsule())
+                    .steppingBack(showsMore)
 
                     HStack(spacing: 0) {
                         ChromeButton(title: "Share", symbol: "square.and.arrow.up") { share() }
+                            .steppingBack(showsMore)
                         moreMenu
                     }
                     .padding(.horizontal, 4)
@@ -221,10 +233,12 @@ struct CanvasView: View {
                 }
                 .overlay {
                     AgentControl(model: model) { showsSettings = true }
+                        .steppingBack(showsMore)
                 }
             }
 
             banners
+                .steppingBack(showsMore)
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
@@ -247,17 +261,21 @@ struct CanvasView: View {
     /// Note-wide things. Page things live on the page pill; Add Image sits with the tools.
     private var moreMenu: some View {
         Menu {
-            Button("History", systemImage: "clock.arrow.circlepath") { showsHistory = true }
+            Button("History", systemImage: "clock.arrow.circlepath") { fromMore { showsConversation = true } }
+                // The menu's items appear when it opens and go when it closes. Choosing an item that presents a sheet
+                // doesn't always fire onDisappear, so each item also brings the chrome back itself (`fromMore`).
+                .onAppear { showsMore = true }
+                .onDisappear { showsMore = false }
             Button("Export as PDF", systemImage: "arrow.down.doc") {
-                exportFile = PDFFile(data: NotePDF.data(for: model, background: background))
+                fromMore { exportFile = PDFFile(data: NotePDF.data(for: model, background: background)) }
             }
 
             Section {
                 Button("Clear the Agent's Marks", systemImage: "eraser.line.dashed", role: .destructive) {
-                    model.clearAgentMarks()
+                    fromMore { model.clearAgentMarks() }
                 }
                 .disabled(!model.hasAgentMarks)
-                Button("Settings", systemImage: "gearshape") { showsSettings = true }
+                Button("Settings", systemImage: "gearshape") { fromMore { showsSettings = true } }
             }
         } label: {
             ChromeSymbol(symbol: "ellipsis")
@@ -265,6 +283,12 @@ struct CanvasView: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .accessibilityLabel("More")
+    }
+
+    /// Runs a More item's action with the menu closed: the rest of the chrome steps forward again.
+    private func fromMore(_ action: () -> Void) {
+        showsMore = false
+        action()
     }
 
     /// Everything about pages, on the page pill (touch and hold) and in the Pages popover.
@@ -351,4 +375,12 @@ struct CanvasView: View {
 
 extension URL: @retroactive Identifiable {
     public var id: String { absoluteString }
+}
+
+private extension View {
+    /// Out of the way of taps while a menu is open over it. It stays in view: the controls shouldn't vanish just
+    /// because More is open.
+    func steppingBack(_ active: Bool) -> some View {
+        allowsHitTesting(!active)
+    }
 }
