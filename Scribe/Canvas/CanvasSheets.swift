@@ -530,6 +530,12 @@ enum NotePDF {
                     cg.restoreGState()
                 }
                 lightImage(page.agentDrawing, bounds: rect, scale: 2).draw(in: rect)
+                if !page.agentMarks.isEmpty {
+                    let marks = ImageRenderer(content: AgentMarksLayer(marks: page.agentMarks)
+                        .frame(width: rect.width, height: rect.height))
+                    marks.scale = 2
+                    marks.uiImage?.draw(in: rect)
+                }
                 lightImage(page.drawing, bounds: rect, scale: 2).draw(in: rect)
 
                 for card in page.cards {

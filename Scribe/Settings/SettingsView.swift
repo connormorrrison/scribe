@@ -4,6 +4,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.appearance) private var appearance = Appearance.system
     @AppStorage(AppSettings.pageBackground) private var pageBackground = PageBackground.dots
     @AppStorage(AppSettings.drawWithFinger) private var drawWithFinger = false
+    @Bindable private var pageMap = PageMapDebug.shared
 
     private var version: String {
         let info = Bundle.main.infoDictionary
@@ -56,6 +57,14 @@ struct SettingsView: View {
                 Text("Drawing")
             } footer: {
                 Text("When off, only Apple Pencil draws, and your finger scrolls and selects.")
+            }
+
+            Section {
+                Toggle("Show Page Map", isOn: $pageMap.showOverlay)
+            } header: {
+                Text("Developer")
+            } footer: {
+                Text("Outlines everything the agent knows about a page, with the free space it can write in. Each page map is also saved to Scribe's Fixtures folder in the Files app.")
             }
 
             Section {

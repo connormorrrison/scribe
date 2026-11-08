@@ -88,6 +88,10 @@ final class CanvasModel {
     var currentPageID: UUID?
     /// Bumped whenever page ink changes from outside a canvas (undo, duplicating, clearing), so canvases reload it.
     private(set) var reloadToken = 0
+    /// Everything on each page with a stable ID and exact bounds: what the agent sees and draws against.
+    let pageMapper: PageMapper
+    /// The mark the agent is drawing right now, revealed like a pen.
+    private(set) var liveMark: LiveMark?
 
     var currentPageIndex: Int {
         content.pages.firstIndex { $0.id == currentPageID } ?? 0
@@ -166,6 +170,7 @@ final class CanvasModel {
         self.pdfURL = pdfURL
         self.file = file
         self.content = content
+        pageMapper = PageMapper(pdfURL: pdfURL)
         currentPageID = content.pages.first?.id
         for page in content.pages {
             for card in page.cards where card.isAnimated { clocks[card.id] = AnimationClock() }
@@ -265,6 +270,28 @@ final class CanvasModel {
     func canvasChanged(page pageID: UUID, drawing: PKDrawing) {
         guard let i = index(of: pageID), content.pages[i].drawing != drawing else { return }
         edit("Drawing", reload: false) { $0.pages[i].drawing = drawing }
+        pageMapper.inkChanged(content.pages[i]) { [weak self] in self?.refreshPageMap(pageID) }
+    }
+
+    /// Maps the page again (for the debug overlay) and, with the overlay on, saves it as a fixture.
+    func refreshPageMap(_ pageID: UUID) {
+        guard let page = page(pageID) else { return }
+        Task {
+            let snapshot = await pageMapper.snapshot(of: page, render: renderForPageMap)
+            guard PageMapDebug.shared.showOverlay, let n = index(of: pageID) else { return }
+            let name = "\(document.title.isEmpty ? "Untitled" : document.title)/page-\(n + 1)"
+            do {
+                try PageFixture.save(snapshot, name: name)
+            } catch {
+                PageMapDebug.log.error("Couldn't save the page map fixture: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    /// The page as the agent sees it: paper (no dots or grid, which would read as ink), photos, both inks and cards.
+    private func renderForPageMap(_ page: NotePage, scale: CGFloat) -> UIImage? {
+        PageRenderer.image(of: page, background: .none, pixelWidth: (NotePageMetrics.width * scale).rounded(),
+                           pdf: pdfURL) { [weak self] in self?.image(named: $0) }
     }
 
     // MARK: Pages
@@ -322,8 +349,7 @@ final class CanvasModel {
     /// Whether deleting the page would lose anything.
     func pageHasContent(_ pageID: UUID) -> Bool {
         guard let page = page(pageID) else { return false }
-        return !page.drawing.strokes.isEmpty || !page.agentDrawing.strokes.isEmpty || !page.images.isEmpty
-            || !page.cards.isEmpty
+        return !page.drawing.strokes.isEmpty || !page.images.isEmpty || page.hasAgentMarks
     }
 
     /// A page's height in page points when it exactly fills the screen. New pages are made this size.
@@ -358,6 +384,7 @@ final class CanvasModel {
         edit("Clear Agent's Marks") {
             for i in $0.pages.indices {
                 $0.pages[i].agentDrawing = PKDrawing()
+                $0.pages[i].agentMarks = []
                 $0.pages[i].cards = []
             }
             $0.visualizations = []
@@ -366,7 +393,7 @@ final class CanvasModel {
     }
 
     var hasAgentMarks: Bool {
-        content.pages.contains { !$0.agentDrawing.strokes.isEmpty || !$0.cards.isEmpty } || !content.visualizations.isEmpty
+        content.pages.contains(where: \.hasAgentMarks) || !content.visualizations.isEmpty
     }
 
     // MARK: Cards
@@ -586,7 +613,7 @@ final class CanvasModel {
         switch agent {
         case .idle: ""
         case .listening: "Listening…"
-        case .thinking: "Thinking…"
+        case .thinking: liveMark == nil ? "Thinking…" : "Writing on your page…"
         case .speaking: "Speaking…"
         }
     }
@@ -717,13 +744,31 @@ final class CanvasModel {
         agent = .thinking
         defer { draftingVisualization = false }
         var messages = Self.messages(for: content.conversation).map(\.json)
+
+        // The page on screen, mapped: the agent sees its picture and everything on it, and can draw on it.
+        let pageID = currentPageID ?? content.pages.first?.id
+        var drawing: DrawingTurn?
+        if let pageID, let i = index(of: pageID) {
+            let page = content.pages[i]
+            let snapshot = await pageMapper.snapshot(of: page, render: renderForPageMap)
+            try Task.checkCancellation()
+            Self.attach(snapshot, page: i + 1, of: content.pages.count, to: &messages)
+            drawing = DrawingTurn(pageID: pageID, context: ActionValidator.ToolContext(snapshot: snapshot, marks: page.agentMarks),
+                                  before: (page.agentMarks, page.height))
+        }
+        defer {
+            liveMark = nil
+            if let drawing { finish(drawing) }
+        }
+
         var said: [String] = []
         var shown = 0
         var fixesLeft = 1
-        for _ in 0..<4 {
+        for _ in 0..<6 {
             let turn = try await claude.sendWithTools(
-                messages, system: Self.agentPrompt(title: document.title, visualizations: content.visualizations.map(\.title)),
-                tools: [VisualizationTool.definition]) { [weak self] tool in
+                messages, system: Self.agentPrompt(title: document.title, visualizations: content.visualizations.map(\.title),
+                                                   canDraw: drawing != nil),
+                tools: [VisualizationTool.definition] + (drawing == nil ? [] : AgentTools.definitions)) { [weak self] tool in
                     guard tool == VisualizationTool.name, let self else { return }
                     withAnimation(.snappy) {
                         self.draftingVisualization = true
@@ -736,7 +781,7 @@ final class CanvasModel {
             if !text.isEmpty { said.append(text) }
             let calls = turn.toolUses
             guard turn.stopReason == "tool_use", !calls.isEmpty else {
-                if said.isEmpty && shown == 0 {
+                if said.isEmpty && shown == 0 && (drawing?.drawn ?? 0) == 0 {
                     throw turn.stopReason == "max_tokens" ? ClaudeClient.ReplyError.cutOff : ClaudeClient.ReplyError.empty
                 }
                 break
@@ -744,9 +789,19 @@ final class CanvasModel {
             messages.append(["role": "assistant", "content": .array(turn.content.filter { $0 != .null })])
             var results: [JSONValue] = []
             for call in calls {
-                let outcome = await showVisualization(call.name, input: call.input,
-                                                      broken: turn.brokenToolIDs.contains(call.id), fixesLeft: &fixesLeft)
-                if outcome.shown { shown += 1 }
+                let outcome: (result: String, isError: Bool)
+                if call.name == VisualizationTool.name {
+                    let shownNow = await showVisualization(call.name, input: call.input,
+                                                           broken: turn.brokenToolIDs.contains(call.id), fixesLeft: &fixesLeft)
+                    if shownNow.shown { shown += 1 }
+                    outcome = (shownNow.result, shownNow.isError)
+                } else if turn.brokenToolIDs.contains(call.id) {
+                    outcome = ("The call was cut off before it was complete. Send it again, shorter.", true)
+                } else if drawing != nil {
+                    outcome = try await draw(call.name, input: call.input, turn: &drawing!)
+                } else {
+                    outcome = ("There's no tool called \(call.name).", true)
+                }
                 results.append(["type": "tool_result", "tool_use_id": .string(call.id),
                                 "content": .string(outcome.result), "is_error": .bool(outcome.isError)])
             }
@@ -754,7 +809,8 @@ final class CanvasModel {
             try Task.checkCancellation()
             messages.append(["role": "user", "content": .array(results)])
         }
-        let answer = said.isEmpty ? "Here it is, in the top right." : said.joined(separator: " ")
+        let answer = said.isEmpty ? (shown > 0 ? "Here it is, in the top right." : "There, on your page.")
+            : said.joined(separator: " ")
         content.conversation.append(ConversationTurn(speaker: .agent, text: answer, spoken: speak))
         changed()
         if speak {
@@ -789,6 +845,85 @@ final class CanvasModel {
         withAnimation(.snappy) { addVisualization(visualization) }
         return ("Shown as a card in the top right, below any earlier ones. Now say one short line about what to try.",
                 false, true)
+    }
+
+    // MARK: Drawing on the page
+
+    /// One turn's drawing on one page: what the validator knows so far, and the page as it was, for undo.
+    private struct DrawingTurn {
+        let pageID: UUID
+        var context: ActionValidator.ToolContext
+        let before: (marks: [AgentMark], height: CGFloat)
+        var drawn = 0
+        var changed = false
+    }
+
+    /// Runs one drawing tool call: checks it, then draws its marks one after another, each revealed like a pen.
+    private func draw(_ tool: String, input: JSONValue, turn: inout DrawingTurn) async throws -> (result: String, isError: Bool) {
+        let decision = ActionValidator.validate(tool, input: input, context: &turn.context)
+        PageMapDebug.shared.logPlacement(tool, decision.notes, result: decision.result)
+        guard !decision.isError else { return (decision.result, true) }
+        let pageID = turn.pageID
+        guard let i = index(of: pageID) else { return ("The page isn't there any more.", true) }
+        if decision.growPage > 0 {
+            withAnimation(.smooth) { content.pages[i].height += decision.growPage }
+            turn.changed = true
+        }
+        if !decision.erase.isEmpty {
+            withAnimation(.easeOut(duration: 0.25)) { content.pages[i].agentMarks.removeAll { decision.erase.contains($0.id) } }
+            turn.changed = true
+        }
+        for mark in decision.marks {
+            guard let i = index(of: pageID) else { break }
+            content.pages[i].agentMarks.append(mark)
+            turn.changed = true
+            turn.drawn += 1
+            liveMark = LiveMark(pageID: pageID, markID: mark.id, start: .now, duration: mark.duration)
+            try await Task.sleep(for: .seconds(mark.duration + 0.12))
+            liveMark = nil
+        }
+        changed()
+        return (decision.result, false)
+    }
+
+    /// Ends a turn that drew: one undo step for everything it drew, and what the person draws next counts as new.
+    private func finish(_ turn: DrawingTurn) {
+        pageMapper.markTurn(pageID: turn.pageID)
+        guard turn.changed, let page = page(turn.pageID) else { return }
+        undoManager.beginUndoGrouping()
+        registerMarksUndo(pageID: turn.pageID, restoring: turn.before, current: (page.agentMarks, page.height))
+        undoManager.endUndoGrouping()
+        log("Drew on page \((index(of: turn.pageID) ?? 0) + 1)", by: .agent)
+        changed()
+    }
+
+    /// Undo puts the page's marks (and its height, if the agent added room) back as they were; redo, the other way.
+    private func registerMarksUndo(pageID: UUID, restoring old: (marks: [AgentMark], height: CGFloat),
+                                   current: (marks: [AgentMark], height: CGFloat)) {
+        undoManager.registerUndo(withTarget: self) { model in
+            guard let i = model.index(of: pageID) else { return }
+            let now = (model.content.pages[i].agentMarks, model.content.pages[i].height)
+            model.content.pages[i].agentMarks = old.marks
+            model.content.pages[i].height = old.height
+            model.registerMarksUndo(pageID: pageID, restoring: now, current: old)
+            model.changed()
+        }
+        undoManager.setActionName("Agent's Marks")
+    }
+
+    /// Adds the page's picture and map to the last thing the person said.
+    private static func attach(_ snapshot: PageMapSnapshot, page: Int, of count: Int, to messages: inout [JSONValue]) {
+        guard let last = messages.indices.last, messages[last]["role"] == "user", let said = messages[last]["content"]?.string
+        else { return }
+        var blocks: [JSONValue] = []
+        if !snapshot.image.isEmpty {
+            blocks.append(["type": "image", "source": ["type": "base64", "media_type": "image/jpeg",
+                                                       "data": .string(snapshot.image.base64EncodedString())]])
+        }
+        blocks.append(["type": "text", "text": .string("The page on screen (page \(page) of \(count)) and its map:\n"
+                                                        + PageMapText.block(snapshot))])
+        blocks.append(["type": "text", "text": .string(said)])
+        messages[last]["content"] = .array(blocks)
     }
 
     /// Puts the reply in the agent bar away. It stays in History.
@@ -830,18 +965,19 @@ final class CanvasModel {
         return messages
     }
 
-    private static func agentPrompt(title: String, visualizations: [String]) -> String {
+    private static func agentPrompt(title: String, visualizations: [String], canDraw: Bool) -> String {
         let note = title.isEmpty ? "a note" : "the note “\(title)”"
         let open = visualizations.isEmpty ? ""
             : "\n\nVisualizations already open, oldest first: " + visualizations.map { "“\($0)”" }.joined(separator: ", ") + "."
+        let page = canDraw ? "\n\n" + AgentTools.guidance : ""
         return """
         You are the agent inside Scribe, an iPad notebook. The person is working in \(note) and talking to you, \
         usually out loud: their words reach you through speech recognition, so read past small transcription \
         mistakes. Your replies may be read aloud by a text-to-speech voice, so write plain conversational \
         sentences: no markdown, lists, headings, code, emoji or links. Be brief, usually one to three sentences, \
-        unless they ask for more. You can't see or change their pages yet, so don't claim to.
+        unless they ask for more.\(page)
 
-        You can show things, though. When they ask to see, visualize, show, model or simulate something, or a picture \
+        You can also show things off the page. When they ask to see, visualize, show, model or simulate something, or a picture \
         or 3D model would explain it far better than words, call \(VisualizationTool.name): it opens as a card in the top \
         right, over their page. Make it something to play with, with controls for what matters, not just a picture. \
         Say one short line first if you like, then make it, then tell them in one short sentence what to try. Never \

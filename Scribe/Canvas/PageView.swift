@@ -41,6 +41,12 @@ struct PageView: View {
                     .allowsHitTesting(false)
             }
 
+            if !page.agentMarks.isEmpty {
+                AgentMarksLayer(marks: page.agentMarks, live: model.liveMark?.pageID == page.id ? model.liveMark : nil,
+                                scale: k)
+                    .frame(width: size.width, height: size.height)
+            }
+
             InkCanvas(model: model, pageID: page.id, scale: k, pageHeight: page.height, drawWithFinger: drawWithFinger,
                       reloadToken: model.reloadToken, zoom: zoom)
                 .frame(width: size.width, height: size.height)
@@ -56,6 +62,11 @@ struct PageView: View {
                                       pageSize: size)
                     .frame(width: size.width, height: size.height)
                     .id(placed.id)
+            }
+
+            if PageMapDebug.shared.showOverlay, let map = model.pageMapper.latest[page.id] {
+                PageMapOverlay(snapshot: map, scale: k)
+                    .frame(width: size.width, height: size.height)
             }
         }
         .frame(width: size.width, height: size.height)

@@ -34,6 +34,7 @@ struct PageSnapshot: View {
             }
 
             Image(uiImage: lightImage(page.agentDrawing, bounds: page.bounds, scale: inkScale)).resizable()
+            AgentMarksLayer(marks: page.agentMarks)
             Image(uiImage: lightImage(page.drawing, bounds: page.bounds, scale: inkScale)).resizable()
 
             ForEach(page.cards) { card in
@@ -124,7 +125,8 @@ final class NoteThumbnails {
         for bounds in [page.drawing.bounds, page.agentDrawing.bounds] where !bounds.isNull && !bounds.isEmpty {
             bottom = max(bottom, bounds.maxY)
         }
-        for frame in page.images.map(\.bounds) + page.cards.map(\.frame) { bottom = max(bottom, frame.maxY) }
+        for frame in page.images.map(\.bounds) + page.cards.map(\.frame) + page.agentMarks.map(\.bounds)
+            where !frame.isNull { bottom = max(bottom, frame.maxY) }
         return bottom
     }
 }

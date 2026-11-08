@@ -85,12 +85,35 @@ struct NotePage: Identifiable, Codable, Equatable {
     var drawing = PKDrawing()
     /// The agent's ink, kept apart so it can be cleared on its own.
     var agentDrawing = PKDrawing()
+    /// What the agent drew and wrote on the page, oldest first.
+    var agentMarks: [AgentMark] = []
     var images: [PlacedImage] = []
     var cards: [AgentCard] = []
     /// For a page of an imported PDF: which PDF page is its paper (`PDFPages`). nil for a blank page.
     var pdfPage: Int?
 
+    init(height: CGFloat = NotePageMetrics.height, pdfPage: Int? = nil) {
+        self.height = height
+        self.pdfPage = pdfPage
+    }
+
+    /// Pages saved before the agent could draw have no marks.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        height = try c.decode(CGFloat.self, forKey: .height)
+        drawing = try c.decode(PKDrawing.self, forKey: .drawing)
+        agentDrawing = try c.decode(PKDrawing.self, forKey: .agentDrawing)
+        agentMarks = try c.decodeIfPresent([AgentMark].self, forKey: .agentMarks) ?? []
+        images = try c.decode([PlacedImage].self, forKey: .images)
+        cards = try c.decode([AgentCard].self, forKey: .cards)
+        pdfPage = try c.decodeIfPresent(Int.self, forKey: .pdfPage)
+    }
+
     var bounds: CGRect { CGRect(x: 0, y: 0, width: NotePageMetrics.width, height: height) }
+
+    /// Anything the agent drew or made on the page.
+    var hasAgentMarks: Bool { !agentDrawing.strokes.isEmpty || !agentMarks.isEmpty || !cards.isEmpty }
 
     /// A copy with new IDs (images keep pointing at the same files).
     func duplicated() -> NotePage {
@@ -98,6 +121,7 @@ struct NotePage: Identifiable, Codable, Equatable {
         copy.id = UUID()
         copy.images = images.map { var image = $0; image.id = UUID(); return image }
         copy.cards = cards.map { var card = $0; card.id = UUID(); return card }
+        copy.agentMarks = agentMarks.map { var mark = $0; mark.id = UUID(); return mark }
         return copy
     }
 }
