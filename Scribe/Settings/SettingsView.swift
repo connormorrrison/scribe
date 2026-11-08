@@ -4,6 +4,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.appearance) private var appearance = Appearance.system
     @AppStorage(AppSettings.pageBackground) private var pageBackground = PageBackground.dots
     @AppStorage(AppSettings.drawWithFinger) private var drawWithFinger = false
+    @AppStorage(AppSettings.helpStyle) private var helpStyle = HelpStyle.show
     @Bindable private var pageMap = PageMapDebug.shared
 
     private var version: String {
@@ -29,6 +30,20 @@ struct SettingsView: View {
                 Text("Voice Model")
             } footer: {
                 Text("Your ElevenLabs API key, used to hear you think out loud and to speak back.")
+            }
+
+            Section {
+                LabeledContent("When I'm Stuck") {
+                    Picker("When I'm Stuck", selection: $helpStyle) {
+                        ForEach(HelpStyle.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 300)
+                }
+            } header: {
+                Text("Agent")
+            } footer: {
+                Text("Show Me works it through step by step on your page, with arrows and drawings. Coach Me writes just the next step and leaves the rest for you.")
             }
 
             Section("Appearance") {

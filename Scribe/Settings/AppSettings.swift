@@ -7,6 +7,47 @@ enum AppSettings {
     static let appearance = "appearance"
     static let pageBackground = "pageBackground"
     static let drawWithFinger = "drawWithFinger"
+    static let helpStyle = "helpStyle"
+}
+
+/// How the agent helps when someone is stuck: works it through for them, or nudges them one step at a time.
+enum HelpStyle: String, CaseIterable, Identifiable {
+    case show, coach
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .show: "Show Me"
+        case .coach: "Coach Me"
+        }
+    }
+
+    static var current: HelpStyle {
+        UserDefaults.standard.string(forKey: AppSettings.helpStyle).flatMap(HelpStyle.init) ?? .show
+    }
+
+    /// What the agent's prompt says about it.
+    var guidance: String {
+        switch self {
+        case .show:
+            """
+            When they're stuck or ask how to do something, show them. Work it through on the page with the steps tool, all \
+            the way to the answer, one small move per step, with arrows and circles on each for what moved, the answer \
+            boxed, and a sketch when the idea has a shape. Don't ask them questions, quiz them or leave blanks for them to \
+            fill in: they want to see it done, then do the next one themselves. If they're part way through their \
+            own working, carry on from where they got to. In your reply, say what the steps did in a sentence or two.
+            """
+        case .coach:
+            """
+            When they're stuck, coach them rather than doing it for them. Show only the next step or two with the steps \
+            tool (box_answer false), with arrows and circles on it for what to do, ending with a "?" where the next \
+            piece goes for them to fill in. Don't \
+            write the answer to a question they're working on unless they already have it. Ask at most one short \
+            question.
+            """
+        }
+    }
 }
 
 /// Light, dark, or follow the system.

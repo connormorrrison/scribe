@@ -1603,7 +1603,7 @@ final class CanvasModel {
         let note = title.isEmpty ? "a note" : "the note “\(title)”"
         let open = visualizations.isEmpty ? ""
             : "\n\nVisualizations already open, oldest first: " + visualizations.map { "“\($0)”" }.joined(separator: ", ") + "."
-        let page = canDraw ? "\n\n" + AgentTools.guidance : ""
+        let page = canDraw ? "\n\n" + AgentTools.guidance + "\n\n" + HelpStyle.current.guidance : ""
         return """
         You are the agent inside Scribe, an iPad notebook. The person is working in \(note) and talking to you, \
         usually out loud: their words reach you through speech recognition, so read past small transcription \

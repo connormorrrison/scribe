@@ -36,7 +36,12 @@ enum ActionValidator {
         var turn: UUID
         /// The agent's marks on the page, in order: am_N is the Nth. Marks drawn this turn are added as they're accepted.
         var markIDs: [UUID]
+        /// The same marks, for annotations that point into an earlier step's writing.
+        var marks: [AgentMark]
         var drawn = 0
+        /// While laying out a worked solution: each step's writing, and which step is being marked ("step_2", "previous").
+        var stepLines: [[AgentText]] = []
+        var currentStep: Int?
 
         init(snapshot: PageMapSnapshot, marks: [AgentMark], turn: UUID = UUID()) {
             map = snapshot.map
@@ -46,6 +51,7 @@ enum ActionValidator {
             occupancy = snapshot.occupancy
             self.turn = turn
             markIDs = marks.map(\.id)
+            self.marks = marks
         }
 
         var pageRect: CGRect { CGRect(origin: .zero, size: pageSize) }
@@ -104,7 +110,7 @@ enum ActionValidator {
     }
 
     /// Marks a turn may draw.
-    static let budget = 16
+    static let budget = 24
 
     static func validate(_ name: String, input: JSONValue, context: inout ToolContext) -> ToolDecision {
         guard AgentTools.names.contains(name) else { return .reject("there's no tool `\(name)`") }
@@ -117,6 +123,7 @@ enum ActionValidator {
             case "write": decision = try write(ToolInput.decode(WriteInput.self, from: input), &context)
             case "mark": decision = try mark(ToolInput.decode(MarkInput.self, from: input), &context)
             case "outline_region": decision = try outline(ToolInput.decode(OutlineInput.self, from: input), &context)
+            case "steps": decision = try steps(ToolInput.decode(StepsInput.self, from: input), &context)
             case "draw": decision = try draw(ToolInput.decode(DrawInput.self, from: input), &context)
             case "erase_marks": decision = try erase(ToolInput.decode(EraseInput.self, from: input), &context)
             default: return .reject("there's no tool `\(name)`")
@@ -136,6 +143,7 @@ enum ActionValidator {
         // The new marks' ids, so the agent can erase them.
         for mark in decision.marks {
             context.markIDs.append(mark.id)
+            context.marks.append(mark)
             context.placed.append(mark.bounds)
         }
         context.drawn += decision.marks.count
@@ -159,6 +167,7 @@ enum ActionValidator {
         var side: PlacementSide?
         var at: [Double]?
         var color: String?
+        var annotate: [AnnotationInput]?
     }
 
     struct MarkInput: Decodable {
@@ -199,13 +208,28 @@ enum ActionValidator {
         let color = try parseColor(input.color)
         let sizes = lines.map { AgentGeometry.textSize($0, size: size) }
         let lineHeight = sizes.map(\.height).max() ?? size
-        let box = CGSize(width: (sizes.map(\.width).max() ?? 0) + 8, height: lineHeight * CGFloat(lines.count) + 4)
+        let textBox = CGSize(width: (sizes.map(\.width).max() ?? 0) + 8, height: lineHeight * CGFloat(lines.count) + 4)
+        func written(in rect: CGRect) -> [AgentText] {
+            lines.enumerated().map { i, line in
+                AgentText(text: line, center: CGPoint(x: rect.midX, y: rect.minY + 2 + lineHeight * (CGFloat(i) + 0.5)),
+                          size: size, color: color)
+            }
+        }
+        let annotations = input.annotate ?? []
+        guard annotations.count <= 6 else { return .reject("that's \(annotations.count) annotations; use at most 6 on one line") }
+        // Arcs and labels on this line's own characters take room around it: placement finds space for all of it.
+        let local = annotations.filter(\.isLocal)
+        let trial = CGRect(origin: .zero, size: textBox)
+        let reach = annotate(local, lines: written(in: trial), c).items.reduce(trial) { $0.union($1.bounds) }
+        let inset = CGPoint(x: trial.minX - reach.minX, y: trial.minY - reach.minY)
+        let box = reach.size
 
         var notes: [String] = []
         let rect: CGRect
         if let at = input.at {
             guard at.count == 2 else { return .reject("`at` must be [x, y]") }
-            let r = CGRect(x: at[0] - box.width / 2, y: at[1] - box.height / 2, width: box.width, height: box.height)
+            let r = CGRect(x: at[0] - textBox.width / 2 - inset.x, y: at[1] - textBox.height / 2 - inset.y,
+                           width: box.width, height: box.height)
             var spot = c.clearOfChrome(fit(r, in: c.pageRect))
             notes.append("at \(Int(at[0])),\(Int(at[1]))" + (spot.origin == r.origin ? "" : " (moved onto the page, clear of the controls)"))
             // An exact spot may sit on a figure (a label on a diagram), but never on text or their ink.
@@ -231,15 +255,20 @@ enum ActionValidator {
             notes.append(placed.note)
         }
 
-        let items = lines.enumerated().map { i, line in
-            AgentInk.text(AgentText(text: line, center: CGPoint(x: rect.midX, y: rect.minY + 2 + lineHeight * (CGFloat(i) + 0.5)),
-                                    size: size, color: color))
-        }
+        // The line, then the marks on it in the order given: the pen writes the step, then shows what moved.
+        let textRect = CGRect(x: rect.minX + inset.x, y: rect.minY + inset.y, width: textBox.width, height: textBox.height)
+        let texts = written(in: textRect)
+        let marked = annotate(annotations, lines: texts, c)
+        let items = texts.map(AgentInk.text) + marked.items
         let mark = AgentMark(turn: c.turn, kind: input.size == .label ? "label" : "note", text: lines.joined(separator: " "),
                              target: nil, items: items)
-        var result = "ok, wrote at \(PageMap.format(rect))"
+        var result = "ok, wrote at \(PageMap.format(textRect))"
         if let moved = notes.first(where: { $0.hasPrefix("moved ") || $0 == "covers text or ink" }) {
             result += " (\(moved))"
+        }
+        if !marked.skipped.isEmpty {
+            result += "; skipped: " + marked.skipped.joined(separator: "; ")
+            notes += marked.skipped
         }
         return ToolDecision(marks: [mark], result: result, notes: notes)
     }
@@ -314,7 +343,7 @@ enum ActionValidator {
     }
 
     /// A straight line with a little of a hand's unsteadiness.
-    private static func handLine(_ a: CGPoint, _ b: CGPoint) -> [CGPoint] {
+    static func handLine(_ a: CGPoint, _ b: CGPoint) -> [CGPoint] {
         let n = max(2, Int(hypot(b.x - a.x, b.y - a.y) / 12))
         let length = hypot(b.x - a.x, b.y - a.y)
         let normal = length > 0 ? CGPoint(x: -(b.y - a.y) / length, y: (b.x - a.x) / length) : .zero
@@ -500,7 +529,7 @@ enum ActionValidator {
 
     // MARK: Targets
 
-    private static func resolve(_ target: PageTarget, _ c: ToolContext) throws -> ResolvedTarget {
+    static func resolve(_ target: PageTarget, _ c: ToolContext) throws -> ResolvedTarget {
         if c.scratch {
             // A blank page of its own: whatever it was near is on the page before. Fill it from the top down.
             let body = c.pageRect.insetBy(dx: 60, dy: 0)

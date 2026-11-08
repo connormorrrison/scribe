@@ -19,6 +19,9 @@ enum AgentStep {
         let words = mark.text.map(quoted)
         let subject = subject(of: mark.target)
         switch mark.kind {
+        case "step":
+            let answer = marks.last?.text.map(quoted).map { ", ending \($0)" } ?? ""
+            return ("Worked it through in \(marks.count) step\(marks.count == 1 ? "" : "s") \(on)\(answer)", "list.number")
         case "note", "label":
             return ("Wrote \(words ?? "a note") \(on)", "pencil.line")
         case "circle": return ("Circled \(subject) \(on)", "circle.dashed")

@@ -24,6 +24,32 @@ enum AgentTools {
         "additionalProperties": false,
     ]
 
+    static let part: JSONValue = [
+        "type": "object",
+        "description": "A piece of writing: `text` (exactly as written), in this line unless `in` names another (\"previous\", am_N, txt_N, ink_N). `nth` picks a repeat, from 1.",
+        "properties": [
+            "text": ["type": "string"],
+            "in": ["type": "string"],
+            "nth": ["type": "integer"],
+        ],
+        "required": ["text"],
+        "additionalProperties": false,
+    ]
+
+    static let annotation: JSONValue = [
+        "type": "object",
+        "properties": [
+            "kind": ["type": "string", "enum": ["arrow", "circle", "underline", "box", "strike", "highlight"]],
+            "on": part,
+            "from": part,
+            "to": part,
+            "label": ["type": "string"],
+            "color": color,
+        ],
+        "required": ["kind"],
+        "additionalProperties": false,
+    ]
+
     static let color: JSONValue = [
         "type": "string",
         "description": "A colour name (blue, red, green, orange, purple, yellow, teal, pink, gray, black) or #RRGGBB. Default: your blue ink.",
@@ -39,17 +65,59 @@ enum AgentTools {
     // MARK: The tools
 
     static let all: [Tool] = [
+        Tool(name: "steps", description: """
+            Work something through, step by step: the way to show any working (maths, a method, a derivation). Give \
+            every step at once; the app lays them out as one well-spaced column beside `near`, each step on its own \
+            line in blue, a grey arrow down between steps with the step's `why` beside it (the move that got here, \
+            2–4 words: "bring the 3 down", "take one off"), and the last step's answer boxed in green. Each step is \
+            one line of maths, one move on from the last: never two moves in one step. `annotate` on a step draws the \
+            move on its characters in orange, as in write: an arrow from the 3 of x³ in the step before ({"text": "³", \
+            "in": "previous"}, or "step_1") to where it lands in this one, a circle on what changes, a strike through \
+            what cancels. Give `answer` when the answer isn't everything after the last "=" of the last step; \
+            box_answer false only when the working stops before the answer. \
+            Example: {"near": {"id": "txt_2"}, "steps": [{"text": "x³"}, {"text": "3x³⁻¹", "why": "bring the 3 down", \
+            "annotate": [{"kind": "arrow", "from": {"text": "³", "in": "previous"}, "to": {"text": "3"}}]}, \
+            {"text": "= 3x²", "why": "take one off", "annotate": [{"kind": "circle", "on": {"text": "²"}}]}]}
+            """,
+             properties: [
+                "steps": ["type": "array", "minItems": 1, "maxItems": 8, "items": [
+                    "type": "object",
+                    "properties": [
+                        "text": ["type": "string"],
+                        "why": ["type": "string"],
+                        "annotate": ["type": "array", "maxItems": 5, "items": annotation],
+                    ],
+                    "required": ["text"],
+                    "additionalProperties": false,
+                ]],
+                "near": target,
+                "side": side,
+                "answer": ["type": "string"],
+                "box_answer": ["type": "boolean"],
+             ],
+             required: ["steps", "near"]),
+
         Tool(name: "write", description: """
-            Handwrite one line of maths, or a tiny label, on the page in your blue ink. Prefer maths and symbols to \
+            Handwrite one line of maths, or a tiny label, on the page in your blue ink. For working in more than one \
+            step, use steps instead: it spaces them out and joins them up. Prefer maths and symbols to \
             words: "2 × 2 = 4 ✓" beats "two times two is four". Words only as a label of at most 4 words, lowercase, \
             no full stops, never a sentence or a question. One step per call: for working, write each step as its \
             own call, the first `near` their work with side "right", each next one `near` your previous step (its \
             am_N) with side "below", so the steps stack into a column. Use \\n only for a short two-line equation. \
             The app puts it in clear space there, never over their writing, the printed text or the app's buttons. \
             `near` a free_N space writes inside that space. Use `at` [x, y] (the text's centre, in page points) only \
-            when it must go exactly there, like a label on a figure. Don't write the answer to a question they're \
-            working on unless they already have it: write the next step and leave a "?" for them. \
-            Example: {"text": "(-2) × (-2) = ?", "size": "math", "near": {"id": "ink_4"}, "side": "right"}
+            when it must go exactly there, like a label on a figure. \
+            `annotate` draws on the characters themselves, in a second colour (orange unless you give one), after the \
+            line is written: what a teacher draws at the board to show what moved or changed. Kinds: arrow (`from` → \
+            `to`), circle, underline, box, strike (a stroke through something that cancels), highlight, each `on` a part, with an \
+            optional `label` of 1–3 words. A part is {"text": "³"} in this line, {"text": "³", "in": "previous"} in the \
+            line you wrote last, {"text": "x", "in": "am_4"} in one of your marks, or {"text": "2x", "in": "txt_3"} in \
+            printed text or their writing; `nth` picks a repeat. Use plain characters and superscripts (x³, x², 3x²), \
+            not ^. An arrow within a line arcs over it; between lines it swoops from one to the other. \
+            Example, the power rule in two steps: {"text": "x³", "size": "math", "near": {"id": "txt_2"}, "side": "right"} \
+            then {"text": "3x³⁻¹ = 3x²", "size": "math", "near": {"id": "am_1"}, "side": "below", "annotate": [\
+            {"kind": "arrow", "from": {"text": "³", "in": "previous"}, "to": {"text": "3"}, "label": "to the front"}, \
+            {"kind": "circle", "on": {"text": "⁻¹"}, "label": "drop one"}]}
             """,
              properties: [
                 "text": ["type": "string"],
@@ -59,6 +127,7 @@ enum AgentTools {
                 "side": side,
                 "at": point,
                 "color": color,
+                "annotate": ["type": "array", "maxItems": 6, "items": annotation],
              ],
              required: ["text"]),
 
@@ -162,12 +231,20 @@ enum AgentTools {
         it (their writing and drawings as ink_N, printed text as txt_N, printed lines, boxes and tables as vec_N, photos, \
         your own marks as am_N), each with exact bounds in page points, plus the FREE SPACE where you can write. \
         You can write and draw on it with write, mark, outline_region and draw, like a tutor with a pen beside \
-        their work. On the page, show, don't tell: maths, symbols, arrows, ticks and small sketches, not sentences. \
-        Go one small step at a time, each step its own mark, stacked in a column to the right of what they're \
-        working on (right of it, then below your previous step). Two to five clear steps beat one busy block. \
-        A sketch (a number line, a graph, a square split into parts) often explains more than any words: use draw. \
-        Keep words on the page to labels of a few words. Say the explaining out loud in your reply instead, \
-        one line about what you drew. \
+        their work. On the page, show, don't tell: maths, symbols, arrows, circles and sketches, not sentences. \
+        Draw more than you write. Show working with the steps tool, all of it in one call: one small move per \
+        step, each with its why, so it reads line by line down the page. Every step that changes something shows the \
+        change with `annotate`: an arrow carrying a number or term to where it goes, a circle on what's about to \
+        change, a strike through what cancels. A line of maths with nothing drawn on it is a missed chance. The \
+        final answer is always boxed in green (steps does it; with write, annotate a green box). \
+        Colours mean something, so keep to them: blue for working, orange for moves (the default for annotate), \
+        green for the answer and what's right (ticks), red for a mistake (cross it, circle it), and a yellow \
+        highlight on what the question gives you (the numbers and conditions to use, highlighted on the question \
+        with mark before you start, when it helps to see them). Grey is the app's, for arrows between steps. \
+        And whenever the idea has a shape (a graph, a tangent, a number line, an area model, \
+        a force diagram, a timeline, a cycle), sketch it with draw beside the steps, labelled: a picture they can \
+        see is often what makes it click. Keep words on the page to labels of a few words. Say the explaining out \
+        loud in your reply instead, a sentence or two about what you showed. \
         Always target things by their id from the page map. Never guess coordinates from the picture: every object has \
         exact bounds. Put each thing beside what it's about: `near` its id. Use a free_N space only for something that         isn't about anything already on the page, and then the one nearest their work and on screen, not simply the         first listed. Spread your marks out and leave room around them rather than packing them together. Use outline_region on a ·traceable object to \
         trace its real lines; figures like maps are split into parts you can trace one by one. Each result says where your mark went; if it says something was moved, that's fine.
