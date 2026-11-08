@@ -50,6 +50,17 @@ struct CanvasView: View {
             .ignoresSafeArea()
             .allowsHitTesting(!showsMore)
 
+            // The agent's visualizations, hovering over the page in the top right.
+            if model.hasVisualizations {
+                GeometryReader { screen in
+                    VisualizationStack(model: model, screen: screen.size, top: (model.deskTop ?? 72) + 12,
+                                       bottom: (model.deskBottom ?? screen.size.height - 96) - 12)
+                }
+                .ignoresSafeArea()
+                .allowsHitTesting(!showsMore)
+                .transition(.opacity)
+            }
+
             VStack(spacing: 0) {
                 topEdge
                 Spacer(minLength: 0)
@@ -89,6 +100,11 @@ struct CanvasView: View {
         .onChange(of: model.currentPageID) { _, _ in model.selectedImage = nil }
         .animation(.snappy, value: model.showsKeyboard)
         .fullScreenCover(item: $model.enlargedCard) { card in EnlargedCard(model: model, card: card) }
+        .background {
+            Color.clear.fullScreenCover(item: $model.enlargedVisualization) { visualization in
+                EnlargedVisualization(model: model, visualization: visualization)
+            }
+        }
         // Each sheet sits on its own view: several presenters on one view pick up each other's taps, and only one of
         // them works.
         .background { Color.clear.sheet(isPresented: $showsSettings) { SettingsSheet() } }

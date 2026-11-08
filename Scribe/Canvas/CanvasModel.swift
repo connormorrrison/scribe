@@ -124,6 +124,18 @@ final class CanvasModel {
     var deskBottom: CGFloat?
     var showsKeyboard = false
     var enlargedCard: AgentCard?
+
+    // MARK: Visualizations (hovering over the page, top right)
+
+    /// The cards are out, not tucked away. They only show while there's something to show.
+    var showsVisualizations = true
+    /// The agent is writing a visualization: a placeholder card waits at the end of the stack.
+    var draftingVisualization = false
+    /// What each page last said in its header, the error it hit, and how many times it's been replayed. Not saved.
+    var visualizationReadouts: [UUID: String] = [:]
+    var visualizationErrors: [UUID: String] = [:]
+    var visualizationReloads: [UUID: Int] = [:]
+    var enlargedVisualization: Visualization?
     private(set) var clocks: [UUID: AnimationClock] = [:]
 
     // MARK: Undo
@@ -346,12 +358,13 @@ final class CanvasModel {
                 $0.pages[i].agentDrawing = PKDrawing()
                 $0.pages[i].cards = []
             }
+            $0.visualizations = []
             $0.history.append(HistoryEntry(author: .you, text: "Cleared the agent's marks"))
         }
     }
 
     var hasAgentMarks: Bool {
-        content.pages.contains { !$0.agentDrawing.strokes.isEmpty || !$0.cards.isEmpty }
+        content.pages.contains { !$0.agentDrawing.strokes.isEmpty || !$0.cards.isEmpty } || !content.visualizations.isEmpty
     }
 
     // MARK: Cards
@@ -400,6 +413,63 @@ final class CanvasModel {
             $0.history.append(HistoryEntry(author: .agent, text: "Made “\(card.title)”"))
         }
         if card.isAnimated { clocks[card.id] = AnimationClock() }
+    }
+
+    // MARK: Visualizations
+
+    /// There's a card (or one on the way) to show.
+    var hasVisualizations: Bool { !content.visualizations.isEmpty || draftingVisualization }
+
+    /// Adds a visualization at the end of the stack and brings the cards out. One undo step.
+    func addVisualization(_ visualization: Visualization) {
+        edit("Add Visualization", reload: false) {
+            $0.visualizations.append(visualization)
+            $0.history.append(HistoryEntry(author: .agent, text: "Made “\(visualization.title)”"))
+        }
+        showsVisualizations = true
+    }
+
+    /// Makes a card taller or shorter. One undo step.
+    func resizeVisualization(_ id: UUID, to height: CGFloat) {
+        let range = Visualization.resizableHeights
+        let height = min(max(height, range.lowerBound), range.upperBound)
+        edit("Resize Visualization", reload: false) {
+            guard let i = $0.visualizations.firstIndex(where: { $0.id == id }) else { return }
+            $0.visualizations[i].height = height
+        }
+    }
+
+    func closeVisualization(_ id: UUID) {
+        edit("Close Visualization", reload: false) { $0.visualizations.removeAll { $0.id == id } }
+        visualizationReadouts[id] = nil
+        visualizationErrors[id] = nil
+    }
+
+    /// Replay: the page starts over.
+    func replayVisualization(_ id: UUID) {
+        visualizationReloads[id, default: 0] += 1
+        visualizationReadouts[id] = nil
+        visualizationErrors[id] = nil
+    }
+
+    /// What a visualization's page said.
+    func visualizationMessage(_ message: CardMessage, from id: UUID) {
+        switch message {
+        case .ready:
+            visualizationErrors[id] = nil
+        case .error(let text, _):
+            visualizationErrors[id] = text
+        case .readout(let text):
+            visualizationReadouts[id] = text.isEmpty ? nil : text
+        case .resize(let height):
+            guard let i = content.visualizations.firstIndex(where: { $0.id == id }) else { return }
+            let h = min(max(height, Visualization.heights.lowerBound), Visualization.heights.upperBound)
+            guard abs(content.visualizations[i].height - h) > 0.5 else { return }
+            content.visualizations[i].height = h // The page's own layout, not an undo step.
+            scheduleSave()
+        case .focus:
+            break
+        }
     }
 
     // MARK: Images
@@ -627,16 +697,52 @@ final class CanvasModel {
         }
     }
 
-    /// Asks Claude to answer the conversation so far, adds the answer, and speaks it if asked.
+    /// Asks Claude to answer the conversation so far, adds the answer, and speaks it if asked. On the way, Claude may
+    /// open visualizations: each page is checked off screen first, and a page that fails goes back to Claude once to
+    /// be fixed.
     private func reply(speak: Bool) async throws {
         guard let claude = ClaudeClient() else { return }
         agent = .thinking
-        // Thinking counts toward max_tokens, so leave room for it on top of a short spoken answer.
-        let reply = try await claude.send(Self.messages(for: content.conversation),
-                                          system: Self.agentPrompt(title: document.title),
-                                          maxTokens: 4096, effort: .low)
-        try Task.checkCancellation()
-        let answer = try reply.answer()
+        defer { draftingVisualization = false }
+        var messages = Self.messages(for: content.conversation).map(\.json)
+        var said: [String] = []
+        var shown = 0
+        var fixesLeft = 1
+        for _ in 0..<4 {
+            let turn = try await claude.sendWithTools(
+                messages, system: Self.agentPrompt(title: document.title, visualizations: content.visualizations.map(\.title)),
+                tools: [VisualizationTool.definition]) { [weak self] tool in
+                    guard tool == VisualizationTool.name, let self else { return }
+                    withAnimation(.snappy) {
+                        self.draftingVisualization = true
+                        self.showsVisualizations = true
+                    }
+                }
+            try Task.checkCancellation()
+            if turn.stopReason == "refusal" { throw ClaudeClient.ReplyError.declined }
+            let text = turn.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { said.append(text) }
+            let calls = turn.toolUses
+            guard turn.stopReason == "tool_use", !calls.isEmpty else {
+                if said.isEmpty && shown == 0 {
+                    throw turn.stopReason == "max_tokens" ? ClaudeClient.ReplyError.cutOff : ClaudeClient.ReplyError.empty
+                }
+                break
+            }
+            messages.append(["role": "assistant", "content": .array(turn.content.filter { $0 != .null })])
+            var results: [JSONValue] = []
+            for call in calls {
+                let outcome = await showVisualization(call.name, input: call.input,
+                                                      broken: turn.brokenToolIDs.contains(call.id), fixesLeft: &fixesLeft)
+                if outcome.shown { shown += 1 }
+                results.append(["type": "tool_result", "tool_use_id": .string(call.id),
+                                "content": .string(outcome.result), "is_error": .bool(outcome.isError)])
+            }
+            withAnimation(.snappy) { draftingVisualization = false }
+            try Task.checkCancellation()
+            messages.append(["role": "user", "content": .array(results)])
+        }
+        let answer = said.isEmpty ? "Here it is, in the top right." : said.joined(separator: " ")
         content.conversation.append(ConversationTurn(speaker: .agent, text: answer, spoken: speak))
         changed()
         if speak {
@@ -644,6 +750,33 @@ final class CanvasModel {
         } else {
             self.reply = AgentReply(text: answer)
         }
+    }
+
+    /// Runs one `show_visualization` call: checks the page off screen, then adds it to the panel. The result is
+    /// what goes back to Claude.
+    private func showVisualization(_ tool: String, input: JSONValue, broken: Bool,
+                                   fixesLeft: inout Int) async -> (result: String, isError: Bool, shown: Bool) {
+        guard tool == VisualizationTool.name else { return ("There's no tool called \(tool).", true, false) }
+        guard !broken else {
+            return ("The call was cut off before the page was complete. Send a shorter page.", true, false)
+        }
+        let visualization: Visualization
+        switch VisualizationTool.visualization(from: input) {
+        case .success(let v): visualization = v
+        case .failure(let error): return ("It wasn't shown: \(error.message).", true, false)
+        }
+        if let problem = await WebCardProbe.check(visualization.html) {
+            if fixesLeft > 0 {
+                fixesLeft -= 1
+                return ("It wasn't shown: \(problem). Fix it and call \(VisualizationTool.name) again.", true, false)
+            }
+            withAnimation(.snappy) { addVisualization(visualization) }
+            return ("It's shown, but it still has a problem: \(problem). Don't try again; say briefly that it may not work fully.",
+                    false, true)
+        }
+        withAnimation(.snappy) { addVisualization(visualization) }
+        return ("Shown as a card in the top right, below any earlier ones. Now say one short line about what to try.",
+                false, true)
     }
 
     /// Puts the reply in the agent bar away. It stays in History.
@@ -685,14 +818,20 @@ final class CanvasModel {
         return messages
     }
 
-    private static func agentPrompt(title: String) -> String {
+    private static func agentPrompt(title: String, visualizations: [String]) -> String {
         let note = title.isEmpty ? "a note" : "the note “\(title)”"
+        let open = visualizations.isEmpty ? ""
+            : "\n\nVisualizations already open, oldest first: " + visualizations.map { "“\($0)”" }.joined(separator: ", ") + "."
         return """
         You are the agent inside Scribe, an iPad notebook. The person is working in \(note) and talking to you, \
         usually out loud: their words reach you through speech recognition, so read past small transcription \
         mistakes. Your replies may be read aloud by a text-to-speech voice, so write plain conversational \
         sentences: no markdown, lists, headings, code, emoji or links. Be brief, usually one to three sentences, \
         unless they ask for more. You can't see or change their pages yet, so don't claim to.
+
+        You can show things, though. When they ask to see, visualize, show, model or simulate something, or a picture \
+        or 3D model would explain it far better than words, call \(VisualizationTool.name): it opens as a card in the top right, over their page. Say one short line first if you like, then make it, then tell them in one short sentence what to \
+        try. Never describe the code or read the page out.\(open)
         """
     }
 

@@ -30,6 +30,8 @@ struct ClaudeClient {
         enum Role: String, Codable { case user, assistant }
         let role: Role
         let content: String
+
+        var json: JSONValue { ["role": .string(role.rawValue), "content": .string(content)] }
     }
 
     struct Reply: Decodable {

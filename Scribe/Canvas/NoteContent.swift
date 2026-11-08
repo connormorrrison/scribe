@@ -131,6 +131,8 @@ struct NoteContent: Codable, Equatable {
     var background: PageBackground?
     var history: [HistoryEntry] = []
     var conversation: [ConversationTurn] = []
+    /// The agent's visualizations, hovering over the pages in the top right, oldest first.
+    var visualizations: [Visualization] = []
 }
 
 extension NoteContent {
@@ -141,6 +143,7 @@ extension NoteContent {
         background = try c.decodeIfPresent(PageBackground.self, forKey: .background)
         history = try c.decodeIfPresent([HistoryEntry].self, forKey: .history) ?? []
         conversation = try c.decodeIfPresent([ConversationTurn].self, forKey: .conversation) ?? []
+        visualizations = try c.decodeIfPresent([Visualization].self, forKey: .visualizations) ?? []
     }
 }
 
