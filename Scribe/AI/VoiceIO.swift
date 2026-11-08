@@ -1,7 +1,7 @@
 import AVFoundation
 
-/// The microphone and the speaker for talking to the agent: records until the person stops talking, and plays the
-/// agent's spoken reply.
+/// The microphone and the speaker for talking to the agent: listens until the person stops talking, handing the
+/// sound over as it's heard, and plays the agent's spoken reply.
 @MainActor
 final class VoiceIO: NSObject, AVAudioPlayerDelegate {
     private var finishRequested = false
@@ -20,74 +20,82 @@ final class VoiceIO: NSObject, AVAudioPlayerDelegate {
     // MARK: Listening
 
     /// How long a pause ends what the person is saying.
-    private static let pause: TimeInterval = 1.4
+    private static let pause: TimeInterval = 1.0
     /// Gives up if nothing is said at all.
     private static let waitForSpeech: TimeInterval = 10
     private static let longest: TimeInterval = 120
 
-    /// Records until the person pauses after speaking, `finish()` is called, or the task is cancelled. Returns the
-    /// recording (an m4a the caller deletes), or nil if nothing was said or it was cancelled.
-    func record() async throws -> URL? {
+    /// Listens until the person pauses after speaking, `finish()` is called, or the task is cancelled, handing
+    /// over each tenth of a second of sound as it's heard (16 kHz mono 16-bit PCM, `SpeechAudio.format`). Returns
+    /// whether there's anything to transcribe: false if nothing was said, or it was cancelled. `level` gets how loud
+    /// each tenth of a second was (dBFS), for showing the person they're being heard.
+    func listen(_ heard: @escaping (Data) -> Void, level: @escaping (Float) -> Void = { _ in }) async throws -> Bool {
         finishRequested = false
         try await Self.activateSession()
 
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("speech-\(UUID().uuidString).m4a")
-        let recorder = try AVAudioRecorder(url: url, settings: [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: 16_000,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
-        ])
-        recorder.isMeteringEnabled = true
-        guard recorder.record() else { throw VoiceError.microphoneUnavailable }
+        let engine = AVAudioEngine()
+        let (chunks, stop) = try SpeechAudio.start(engine)
+        defer {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+            stop.finish()
+        }
 
         let started = Date()
         var noiseFloor: Float = 0
-        var heard = false
+        var spoke = false
         var quietSince: Date?
-        while !Task.isCancelled, !finishRequested {
-            try? await Task.sleep(for: .milliseconds(80))
-            recorder.updateMeters()
-            let power = recorder.averagePower(forChannel: 0)
-            noiseFloor = min(noiseFloor, power)
+        // Ends on its own if the task is cancelled.
+        for await chunk in chunks {
+            if finishRequested { break }
+            heard(chunk.pcm)
+            level(chunk.power)
+            noiseFloor = min(noiseFloor, chunk.power)
             // Speech is well above the quietest the room has been.
-            if power > max(noiseFloor + 15, -45) {
-                heard = true
+            if chunk.power > max(noiseFloor + 15, -45) {
+                spoke = true
                 quietSince = nil
-            } else if heard {
+            } else if spoke {
                 let since = quietSince ?? .now
                 quietSince = since
                 if Date.now.timeIntervalSince(since) > Self.pause { break }
             }
             let elapsed = Date.now.timeIntervalSince(started)
-            if (!heard && elapsed > Self.waitForSpeech) || elapsed > Self.longest { break }
+            if (!spoke && elapsed > Self.waitForSpeech) || elapsed > Self.longest { break }
         }
-        recorder.stop()
 
-        // Tapped "done" before the meter caught any speech: still send it, ElevenLabs may hear something.
-        if Task.isCancelled || !(heard || finishRequested) {
-            try? FileManager.default.removeItem(at: url)
-            return nil
-        }
-        return url
+        // Tapped "done" before the meter caught any speech: still transcribe it, ElevenLabs may hear something.
+        return !Task.isCancelled && (spoke || finishRequested)
     }
 
-    /// Ends the current recording now (the person tapped to say they're done).
+    /// Stops listening now (the person tapped to say they're done).
     func finish() { finishRequested = true }
 
     // MARK: Speaking
 
     /// Plays `audio` to the end, or until the task is cancelled.
-    func play(_ audio: Data) async throws {
+    /// `started` runs the moment the audio starts, so anything shown alongside it can keep time with it.
+    /// `level` gets how loud the audio is as it plays (dBFS, about 30 times a second).
+    func play(_ audio: Data, started: () -> Void = {}, level: @escaping (Float) -> Void = { _ in }) async throws {
         try await Self.activateSession()
 
         let player = try AVAudioPlayer(data: audio)
         player.delegate = self
         self.player = player
+        player.isMeteringEnabled = true
+        player.prepareToPlay()
+        let meter = Task { [weak self] in
+            while !Task.isCancelled, let player = self?.player {
+                player.updateMeters()
+                level(player.averagePower(forChannel: 0))
+                try? await Task.sleep(for: .milliseconds(33))
+            }
+        }
+        defer { meter.cancel() }
         await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 playback = continuation
-                if !player.play() { stopPlayback() }
+                if player.play() { started() } else { stopPlayback() }
             }
         } onCancel: {
             Task { @MainActor in self.stopPlayback() }
@@ -146,5 +154,68 @@ enum VoiceError: LocalizedError {
 
     var errorDescription: String? {
         "The microphone couldn't start. Make sure no other app is using it, then try again."
+    }
+}
+
+/// Turns what the microphone hears into what ElevenLabs' realtime transcription takes. It lives outside `VoiceIO`
+/// because the microphone's callback runs on the audio thread, not the main actor.
+enum SpeechAudio {
+    /// 16 kHz mono 16-bit PCM.
+    static let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1,
+                                      interleaved: true)!
+
+    /// A tenth of a second of sound: the audio, and how loud it was (dBFS).
+    struct Chunk: Sendable {
+        let pcm: Data
+        let power: Float
+    }
+
+    /// Starts the microphone. Chunks arrive in the stream until the engine is stopped and the continuation finished.
+    static func start(_ engine: AVAudioEngine) throws -> (AsyncStream<Chunk>, AsyncStream<Chunk>.Continuation) {
+        let input = engine.inputNode
+        let inputFormat = input.outputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, let converter = AVAudioConverter(from: inputFormat, to: format) else {
+            throw VoiceError.microphoneUnavailable
+        }
+        let (stream, continuation) = AsyncStream.makeStream(of: Chunk.self)
+        input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(inputFormat.sampleRate / 10),
+                         format: inputFormat) { buffer, _ in
+            continuation.yield(Chunk(pcm: convert(buffer, with: converter), power: power(of: buffer)))
+        }
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            throw VoiceError.microphoneUnavailable
+        }
+        return (stream, continuation)
+    }
+
+    private static func convert(_ buffer: AVAudioPCMBuffer, with converter: AVAudioConverter) -> Data {
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * format.sampleRate / buffer.format.sampleRate) + 32
+        guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return Data() }
+        var fed = false
+        var error: NSError?
+        converter.convert(to: output, error: &error) { _, status in
+            if fed {
+                status.pointee = .noDataNow
+                return nil
+            }
+            fed = true
+            status.pointee = .haveData
+            return buffer
+        }
+        guard error == nil, let samples = output.int16ChannelData else { return Data() }
+        return Data(bytes: samples[0], count: Int(output.frameLength) * MemoryLayout<Int16>.size)
+    }
+
+    /// Loudness as dBFS, like a level meter.
+    private static func power(of buffer: AVAudioPCMBuffer) -> Float {
+        guard let samples = buffer.floatChannelData, buffer.frameLength > 0 else { return -160 }
+        var sum: Float = 0
+        for i in 0..<Int(buffer.frameLength) { sum += samples[0][i] * samples[0][i] }
+        let rms = (sum / Float(buffer.frameLength)).squareRoot()
+        return 20 * log10(max(rms, 1e-8))
     }
 }

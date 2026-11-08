@@ -63,9 +63,14 @@ struct InkSwatch: Codable, Identifiable, Hashable {
         return InkSwatch(swatchHex: color.hex, inkHex: ink.hex, inkAlpha: 0.38)
     }
 
-    static let penDefaults: [InkSwatch] = [.pen("#1C1C1E"), .pen("#007AFF"), .pen("#FF3B30")]
+    /// The blue pen. Also the agent's ink, cursors and the landing page's blue: blue means "the agent wrote this".
+    static let blueHex = "#007AFF"
+    /// The yellow highlighter. The landing page's highlighting agent uses it too, so it looks like a note.
+    static let yellowHighlighter = InkSwatch(swatchHex: "#FFF3A3", inkHex: "#FFD60A", inkAlpha: 0.40)
+
+    static let penDefaults: [InkSwatch] = [.pen("#1C1C1E"), .pen(blueHex), .pen("#FF3B30")]
     static let highlighterDefaults: [InkSwatch] = [
-        InkSwatch(swatchHex: "#FFF3A3", inkHex: "#FFD60A", inkAlpha: 0.40),
+        yellowHighlighter,
         InkSwatch(swatchHex: "#C9F2D2", inkHex: "#34C759", inkAlpha: 0.32),
         InkSwatch(swatchHex: "#CFE5FF", inkHex: "#0A84FF", inkAlpha: 0.26),
     ]

@@ -145,16 +145,20 @@ struct ZoomablePage: View {
     @State private var offset: CGPoint = .zero
 
     static let maxZoom: CGFloat = 4
-    /// Room around the page: clear of the top controls (with the status bar), the bottom controls (with the home
-    /// indicator), and the screen's sides.
-    static let top: CGFloat = 96
-    static let bottom: CGFloat = 92
+    /// The same gap between the page and the controls above it as below it.
+    static let gap: CGFloat = 16
     static let side: CGFloat = 32
+
+    /// Room above the page: clear of the top controls (and the status bar). The controls are measured, so the page
+    /// stays evenly placed whatever they hold.
+    private var top: CGFloat { (model.deskTop ?? 80) + Self.gap }
+    /// Room below the page: clear of the toolbar, the page dots when there are any, and the home indicator.
+    private var bottom: CGFloat { size.height - (model.deskBottom ?? size.height - 76) + Self.gap }
 
     /// The page's width when it fits.
     private var fitWidth: CGFloat {
         guard onDesk else { return max(1, size.width) }
-        let available = CGSize(width: size.width - 2 * Self.side, height: size.height - Self.top - Self.bottom)
+        let available = CGSize(width: size.width - 2 * Self.side, height: size.height - top - bottom)
         return max(1, min(available.width, available.height * NotePageMetrics.width / page.height))
     }
 
@@ -169,8 +173,8 @@ struct ZoomablePage: View {
                 .shadow(color: .black.opacity(onDesk ? 0.06 : 0), radius: 12, y: 8)
                 .shadow(color: .black.opacity(onDesk ? 0.12 : 0), radius: 1.5, y: 1)
                 .padding(.horizontal, onDesk ? Self.side : 0)
-                .padding(.top, onDesk ? Self.top : 0)
-                .padding(.bottom, onDesk ? Self.bottom : 0)
+                .padding(.top, onDesk ? top : 0)
+                .padding(.bottom, onDesk ? bottom : 0)
                 .frame(minWidth: size.width, minHeight: size.height, alignment: onDesk ? .center : .top)
         }
         .scrollPosition($position)

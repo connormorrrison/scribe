@@ -1,10 +1,10 @@
 import SwiftUI
 import UIKit
 
-/// "Scribe": the first screen on every cold launch. Swipe up (or tap the hint) to open the library.
+/// "Scribe": the first screen on every cold launch. Tap Open (or swipe up) to open the library.
 ///
 /// Everything on screen is a pure function of one clock, `t` (seconds since the view appeared): the intro, the
-/// bobbing hint, the two cards and the drawing cursors. Layout is done in *design points* (the 1194 × 834 landscape
+/// Open button, the two cards and the drawing cursors. Layout is done in *design points* (the 1194 × 834 landscape
 /// reference) and scaled by `s` to the real screen, so portrait and other iPad sizes scale proportionally.
 struct LandingView: View {
     /// Called as the page starts sliding away, so the content underneath can come in.
@@ -23,7 +23,7 @@ struct LandingView: View {
     static let taglineKey = "help you learn"
     /// Two deliberate lines, so the break falls in a natural place.
     static let tagline = "Write anything. Scribe’s AI agents see your page and join in,\nwriting, drawing and building 3D models to help you learn."
-    static let message = "Scribe. \(tagline.replacingOccurrences(of: "\n", with: " ")) Swipe up to get started."
+    static let message = "Scribe. \(tagline.replacingOccurrences(of: "\n", with: " "))"
 
     var body: some View {
         GeometryReader { geo in
@@ -42,10 +42,8 @@ struct LandingView: View {
         .offset(y: lift)
         .contentShape(Rectangle())
         .gesture(swipe)
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(Self.message)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { leave() }
     }
 
     // MARK: Scene
@@ -99,11 +97,10 @@ struct LandingView: View {
             // Centred across the screen, and a little above the middle vertically (the optical centre).
             .frame(width: layout.screen.width, height: layout.screen.height * 0.92)
 
-            // Swipe hint
+            // Open
             VStack {
                 Spacer()
-                SwipeHint(scale: textScale, action: leave)
-                    .offset(y: clock.bob)
+                OpenButton(action: leave)
                     .opacity(Ease.out(clock.progress(2.2, 2.7)))
                     .padding(.bottom, max(0, 60 * s - 12))
             }
@@ -170,10 +167,14 @@ struct LandingView: View {
 enum Landing {
     static let background = Color.white   // the note paper colour
     static let secondary = Color(red: 0x6E / 255, green: 0x6E / 255, blue: 0x73 / 255)
-    static let blue = Color(red: 0, green: 0x7A / 255, blue: 1)
+    /// The note's blue pen.
+    static let blue = Color(uiColor: UIColor(hex: InkSwatch.blueHex))
     /// Agent pen ink and cursors are blue: blue means "the agent wrote this". The one exception is the highlighter.
-    static let agentInk = AgentColor("#007AFF")
-    static let highlighter = Color(red: 1, green: 0xD6 / 255, blue: 0x0A / 255)
+    static let agentInk = AgentColor(InkSwatch.blueHex)
+    /// The highlighter agent's cursor: the note's yellow highlighter at full strength.
+    static let highlighter = Color(uiColor: UIColor(hex: InkSwatch.yellowHighlighter.inkHex))
+    /// What the highlighter agent leaves on the page: the note's yellow highlighter ink, so the two match.
+    static let highlighterInk = Color(uiColor: InkSwatch.yellowHighlighter.inkColor)
 
     /// SF Pro Rounded as a UIFont, for measuring text laid out with `.system(design: .rounded)`.
     static func rounded(size: CGFloat, weight: UIFont.Weight) -> UIFont {
@@ -183,7 +184,8 @@ enum Landing {
     }
     static let cyan = Color(red: 0x58 / 255, green: 0xC4 / 255, blue: 0xDD / 255)
     static let card = Color(red: 0x0E / 255, green: 0x0E / 255, blue: 0x10 / 255)
-    static let yellow = Color(red: 1, green: 1, blue: 0)
+    /// The note's highlighter yellow, at full strength.
+    static let yellow = highlighter
 }
 
 enum Ease {
@@ -218,7 +220,6 @@ struct LandingClock {
 
     var cursorOpacity: Double { Ease.out(progress(Self.cursorsAt, Self.cursorsAt + 0.3)) }
     var cardTime: Double { still ? 1.2 : t }
-    var bob: CGFloat { still ? 0 : -6 * (0.5 - 0.5 * cos(2 * .pi * max(0, t - 2.7) / 2.4)) }
 }
 
 /// Design space: the 1194 × 834 landscape reference, stretched along whichever axis the screen has extra room.
@@ -740,7 +741,7 @@ private struct InkLayer: View {
                     if let label = stroke.label {
                         AgentRenderer.draw(label, progress: f, seed: 0, in: &ink)
                     } else if stroke.highlight {
-                        ink.stroke(stroke.path(to: f), with: .color(track.color.opacity(0.8)),
+                        ink.stroke(stroke.path(to: f), with: .color(Landing.highlighterInk),
                                    style: StrokeStyle(lineWidth: stroke.width, lineCap: .butt, lineJoin: .round))
                     } else {
                         ink.stroke(stroke.path(to: f), with: .color(track.color),
@@ -818,24 +819,14 @@ private struct DotGrid: View {
     }
 }
 
-private struct SwipeHint: View {
-    let scale: CGFloat
+/// Opens the library. The one main action on the page, so it's the filled button.
+private struct OpenButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 6 * scale) {
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 20 * scale, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Landing.blue)
-                Text("Swipe up to get started")
-                    .font(.system(size: 17 * scale, weight: .regular, design: .rounded))
-                    .foregroundStyle(Landing.secondary)
-            }
-            .padding(12)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        // The same size as the app's other filled buttons (New Note, Try Again).
+        Button("Open", action: action)
+            .primaryActionButton()
     }
 }
 

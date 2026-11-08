@@ -56,14 +56,35 @@ struct CanvasView: View {
                 if showsPageLabel {
                     PageChangeLabel(current: model.currentPageIndex + 1, count: model.content.pages.count)
                         .padding(.bottom, 16)
-                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                        // Pops in quickly, fades away a little more gently.
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.9))
+                                .animation(.easeOut(duration: 0.15)),
+                            removal: .opacity.animation(.easeIn(duration: 0.3))))
                 }
-                bottomEdge
-                    .steppingBack(showsMore)
+                VStack(spacing: 0) {
+                    bottomEdge
+                        .steppingBack(showsMore)
+                    // Which page this is, like the home screen's page dots: at the very bottom, under the toolbar.
+                    // Tap or drag along them to move. Only with more than one page, so a single page keeps the
+                    // toolbar at the bottom.
+                    if model.content.pages.count > 1 {
+                        PageDots(count: model.content.pages.count, current: model.currentPageIndex) { index in
+                            guard model.content.pages.indices.contains(index) else { return }
+                            withAnimation(.snappy) { model.currentPageID = model.content.pages[index].id }
+                        }
+                        .fixedSize()
+                        .padding(.top, -6)
+                        .steppingBack(showsMore)
+                        .transition(.opacity)
+                    }
+                }
+                // Where the bottom controls (toolbar and dots) begin.
+                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { model.deskBottom = $0 }
             }
+
         }
         .animation(.easeOut(duration: 0.2), value: showsMore)
-        .animation(.easeOut(duration: 0.25), value: showsPageLabel)
         .task(id: model.currentPageID) { await flashPageLabel() }
         .background(Color.white.ignoresSafeArea())
         .animation(.snappy, value: model.banner)
@@ -73,9 +94,8 @@ struct CanvasView: View {
         .animation(.snappy, value: model.showsKeyboard)
         .fullScreenCover(item: $model.enlargedCard) { card in EnlargedCard(model: model, card: card) }
         // Each sheet sits on its own view: several presenters on one view pick up each other's taps, and only one of
-        // them works. History, like Settings beside it in More, is a sheet with Done.
+        // them works.
         .background { Color.clear.sheet(isPresented: $showsSettings) { SettingsSheet() } }
-        .background { Color.clear.sheet(isPresented: $showsConversation) { HistorySheet(model: model) } }
         .background { Color.clear.sheet(item: $shareURL) { url in ShareSheet(items: [url]) } }
         // The photo picker, the Files picker and the PDF exporter each sit on their own view: on one view, the last
         // of them wins and the others never appear.
@@ -178,7 +198,7 @@ struct CanvasView: View {
         }
     }
 
-    /// Shows "Page 3 of 5" for a moment after landing on another page (not when the note opens).
+    /// Flashes "Page 3 of 5" briefly after landing on another page (not when the note opens).
     @State private var labelledPageID: UUID?
 
     private func flashPageLabel() async {
@@ -186,7 +206,7 @@ struct CanvasView: View {
         defer { labelledPageID = id }
         guard labelledPageID != nil, labelledPageID != id else { return }
         showsPageLabel = true
-        try? await Task.sleep(for: .seconds(1.2))
+        try? await Task.sleep(for: .seconds(0.7))
         guard !Task.isCancelled else { return }
         showsPageLabel = false
     }
@@ -224,6 +244,16 @@ struct CanvasView: View {
                     .steppingBack(showsMore)
 
                     HStack(spacing: 0) {
+                        // Its own button, not in More: one tap, and it pops up right here.
+                        ChromeButton(title: "History", symbol: "clock.arrow.circlepath", selected: showsConversation) {
+                            showsConversation.toggle()
+                        }
+                        // A standard popover: it points at the button, and a tap outside closes it.
+                        .popover(isPresented: $showsConversation, arrowEdge: .top) {
+                            HistoryPopover(model: model)
+                                .presentationCompactAdaptation(.popover)
+                        }
+                        .steppingBack(showsMore)
                         ChromeButton(title: "Share", symbol: "square.and.arrow.up") { share() }
                             .steppingBack(showsMore)
                         moreMenu
@@ -232,9 +262,11 @@ struct CanvasView: View {
                     .canvasChrome(Capsule())
                 }
                 .overlay {
-                    AgentControl(model: model) { showsSettings = true }
+                    AgentControl(model: model, openSettings: { showsSettings = true }, openHistory: { showsConversation = true })
                         .steppingBack(showsMore)
                 }
+                // Where the top controls end (banners aside: they come and go over the page).
+                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { model.deskTop = $0 }
             }
 
             banners
@@ -261,14 +293,13 @@ struct CanvasView: View {
     /// Note-wide things. Page things live on the page pill; Add Image sits with the tools.
     private var moreMenu: some View {
         Menu {
-            Button("History", systemImage: "clock.arrow.circlepath") { fromMore { showsConversation = true } }
-                // The menu's items appear when it opens and go when it closes. Choosing an item that presents a sheet
-                // doesn't always fire onDisappear, so each item also brings the chrome back itself (`fromMore`).
-                .onAppear { showsMore = true }
-                .onDisappear { showsMore = false }
             Button("Export as PDF", systemImage: "arrow.down.doc") {
                 fromMore { exportFile = PDFFile(data: NotePDF.data(for: model, background: background)) }
             }
+            // The menu's items appear when it opens and go when it closes. Choosing an item that presents a sheet
+            // doesn't always fire onDisappear, so each item also brings the chrome back itself (`fromMore`).
+            .onAppear { showsMore = true }
+            .onDisappear { showsMore = false }
 
             Section {
                 Button("Clear the Agent's Marks", systemImage: "eraser.line.dashed", role: .destructive) {

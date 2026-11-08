@@ -6,6 +6,21 @@ enum AgentState: Equatable {
     case idle, listening, thinking, speaking
 }
 
+/// The agent's answer, streaming through the agent bar a word at a time. Each one is new, so the bar starts over.
+struct AgentReply: Identifiable, Equatable {
+    let id = UUID()
+    let text: String
+    /// When each word is said, in seconds from when the reply appears, if it's being spoken. Otherwise the words
+    /// come at reading pace.
+    var wordStarts: [TimeInterval]?
+
+    var words: [String] { Self.words(in: text) }
+
+    static func words(in text: String) -> [String] {
+        text.split(whereSeparator: \.isWhitespace).map(String.init)
+    }
+}
+
 /// A banner just under the top row.
 enum CanvasBanner: Equatable {
     /// Something went wrong with the agent; offers Settings and Try again.
@@ -87,10 +102,26 @@ final class CanvasModel {
     // MARK: Agent and banners
 
     var agent = AgentState.idle
+    /// The agent's answer, streaming through the agent bar.
+    var reply: AgentReply?
+    /// What the person has said so far while the agent listens, as it's recognised.
+    var heard = ""
+    /// How loud the person (while listening) or the agent's voice (while speaking) is right now, 0 to 1. The dot
+    /// follows it.
+    var level: Double = 0
+
+    /// A level meter's dBFS as 0 to 1: quiet rooms sit near 0, speech close to the microphone near 1.
+    private static func loudness(_ power: Float) -> Double {
+        min(1, max(0, (Double(power) + 50) / 40))
+    }
     var banner: CanvasBanner?
     var selectedImage: ImageSelection?
     /// The page on screen is zoomed in, so drags pan it instead of turning the page.
     var pageZoomed = false
+    /// The room a PDF page has on the desk, measured from the chrome (in screen points from the top): below the top
+    /// controls, and above the bottom controls. Nil until the chrome has been laid out.
+    var deskTop: CGFloat?
+    var deskBottom: CGFloat?
     var showsKeyboard = false
     var enlargedCard: AgentCard?
     private(set) var clocks: [UUID: AnimationClock] = [:]
@@ -487,6 +518,8 @@ final class CanvasModel {
         agentTask = nil
         voice.stopPlayback()
         agent = .idle
+        reply = nil
+        level = 0
     }
 
     /// The agent control: starts listening; while listening, sends what was said straight away; otherwise stops.
@@ -495,6 +528,7 @@ final class CanvasModel {
         case .idle:
             guard keysReady() else { return }
             banner = nil
+            reply = nil
             listen()
         case .listening:
             voice.finish()
@@ -508,6 +542,7 @@ final class CanvasModel {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, keysReady(voice: false) else { return }
         showsKeyboard = false
+        reply = nil
         banner = nil
         say(text, spoken: false)
         run { model in try await model.reply(speak: false) }
@@ -536,7 +571,8 @@ final class CanvasModel {
         run { model in try await model.speak(turn.text) }
     }
 
-    /// Voice to text (ElevenLabs), then the agent's reply (Claude), then text to voice (ElevenLabs).
+    /// Voice to text as it's spoken (ElevenLabs realtime), then the agent's reply (Claude), then text to voice
+    /// (ElevenLabs).
     private func listen() {
         run { model in
             guard await VoiceIO.microphoneAllowed() else {
@@ -544,11 +580,23 @@ final class CanvasModel {
                 return
             }
             guard let voiceKey = ElevenLabsClient() else { return }
+            model.heard = ""
             model.agent = .listening
-            guard let recording = try await model.voice.record() else { return }
-            defer { try? FileManager.default.removeItem(at: recording) }
+            let live = LiveTranscription(apiKey: voiceKey.apiKey) { words in
+                withAnimation(.smooth(duration: 0.28)) { model.heard = words }
+            } failed: {
+                model.voice.finish()
+            }
+            defer {
+                live.close()
+                model.heard = ""
+            }
+            let spoke = try await model.voice.listen({ live.send($0) },
+                                                     level: { model.level = Self.loudness($0) })
+            model.level = 0
+            guard spoke else { return }
             model.agent = .thinking
-            let said = try await voiceKey.transcribe(recording)
+            let said = try await live.finish().trimmingCharacters(in: .whitespacesAndNewlines)
             try Task.checkCancellation()
             guard !said.isEmpty else {
                 model.banner = .notice("The agent didn't catch that. Tap the dot and try again.")
@@ -574,6 +622,7 @@ final class CanvasModel {
             }
             guard !Task.isCancelled else { return }
             self.agent = .idle
+            self.level = 0
             self.voice.deactivate()
         }
     }
@@ -590,16 +639,29 @@ final class CanvasModel {
         let answer = try reply.answer()
         content.conversation.append(ConversationTurn(speaker: .agent, text: answer, spoken: speak))
         changed()
-        if speak { try await self.speak(answer) }
+        if speak {
+            try await self.speak(answer)
+        } else {
+            self.reply = AgentReply(text: answer)
+        }
+    }
+
+    /// Puts the reply in the agent bar away. It stays in History.
+    func dismissReply() {
+        reply = nil
     }
 
     private func speak(_ text: String) async throws {
         guard let voiceKey = ElevenLabsClient() else { return }
         agent = .thinking
-        let audio = try await voiceKey.speak(text)
+        let speech = try await voiceKey.speak(text)
         try Task.checkCancellation()
         agent = .speaking
-        try await voice.play(audio)
+        // The words stream through the bar as they're said, from the moment the audio starts.
+        try await voice.play(speech.audio, started: {
+            reply = AgentReply(text: text, wordStarts: speech.wordStarts)
+        }, level: { [weak self] in self?.level = Self.loudness($0) })
+        level = 0
     }
 
     /// Adds what the person said or typed to the conversation.

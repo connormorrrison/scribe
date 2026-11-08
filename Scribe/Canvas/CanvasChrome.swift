@@ -92,25 +92,40 @@ struct ChromeSymbol: View {
 struct AgentControl: View {
     @Bindable var model: CanvasModel
     var openSettings: () -> Void
+    var openHistory: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
 
     private var state: AgentState { model.agent }
     private var typing: Bool { model.showsKeyboard && state == .idle }
-    private var expanded: Bool { typing || state != .idle }
-    private var showsStop: Bool { !typing && state != .idle }
+    /// The agent's answer, while it's in the bar.
+    private var shownReply: AgentReply? { typing || !(state == .idle || state == .speaking) ? nil : model.reply }
+    /// The person's words, while they're speaking.
+    private var hearing: Bool { state == .listening && !model.heard.isEmpty }
+    private var streaming: Bool { shownReply != nil || hearing }
+    private var expanded: Bool { typing || state != .idle || shownReply != nil }
+    /// Stop ends whatever the agent is doing: listening, thinking, speaking, or streaming a typed answer.
+    private var showsStop: Bool { !typing && (state != .idle || shownReply != nil) }
 
     /// What the bar shows. A change of mode gets the livelier spring.
-    private enum Mode: Hashable { case dot, line, field }
-    private var mode: Mode { typing ? .field : (expanded ? .line : .dot) }
+    private enum Mode: Hashable { case dot, line, field, reply }
+    private var mode: Mode {
+        if typing { return .field }
+        if streaming { return .reply }
+        return expanded ? .line : .dot
+    }
 
     private static let fieldWidth: CGFloat = 320
-    private static let lineFont = UIFont.systemFont(ofSize: 15, weight: .regular)
+    private static let replyWidth: CGFloat = 400
+    /// The base body size, as in the rest of the app.
+    static let textSize: CGFloat = 17
+    private static let lineFont = UIFont.systemFont(ofSize: textSize, weight: .regular)
         .withDesign(.rounded)
 
     private var barWidth: CGFloat {
         if typing { return Self.fieldWidth }
+        if streaming { return Self.replyWidth }
         guard expanded else { return CanvasChromeMetrics.button }
         let w = ceil((model.agentLine as NSString).size(withAttributes: [.font: Self.lineFont]).width)
         return min(300, max(168, CanvasChromeMetrics.button + w + 16 + (showsStop ? CanvasChromeMetrics.button : 0)))
@@ -119,13 +134,12 @@ struct AgentControl: View {
     var body: some View {
         HStack(spacing: 0) {
             HStack(spacing: 0) {
-                AgentOrb(listening: state == .listening || state == .speaking, reduceMotion: reduceMotion)
+                AgentOrb(model: model, reduceMotion: reduceMotion)
                     .frame(width: CanvasChromeMetrics.button, height: CanvasChromeMetrics.button)
                     .modifier(OrbGather(trigger: mode, reduceMotion: reduceMotion))
-                if expanded && !typing {
-                    Text(model.agentLine)
-                        .font(.system(size: 15, weight: .regular, design: .rounded))
-                        .foregroundStyle(state == .thinking ? .secondary : .primary)
+                if expanded && !typing && !streaming {
+                    ShimmerText(text: model.agentLine, shimmering: state == .thinking, reduceMotion: reduceMotion)
+                        .font(.system(size: Self.textSize, weight: .regular, design: .rounded))
                         .lineLimit(1)
                         .truncationMode(.head)
                         .id(model.agentLine)
@@ -149,6 +163,37 @@ struct AgentControl: View {
                 typeField
                     .frame(width: Self.fieldWidth - CanvasChromeMetrics.button)
                     .transition(reveal)
+            }
+
+            if hearing {
+                // Tap when you're done talking, like the dot.
+                StreamingLine(words: AgentReply.words(in: model.heard), reduceMotion: reduceMotion)
+                    .padding(.trailing, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.toggleAgent() }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(model.heard)
+                    .accessibilityHint("Double-tap when you're done talking")
+                    .accessibilityAddTraits([.isButton, .updatesFrequently])
+                    .transition(.opacity)
+            }
+
+            if let reply = shownReply {
+                // Tap for the whole answer in History.
+                ReplyStream(reply: reply, reduceMotion: reduceMotion) { model.dismissReply() }
+                    .padding(.trailing, 20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        model.dismissReply()
+                        openHistory()
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(reply.text)
+                    .accessibilityHint("Double-tap to see it in History")
+                    .accessibilityAddTraits(.isButton)
+                    .transition(.opacity)
             }
 
             if showsStop {
@@ -196,7 +241,7 @@ struct AgentControl: View {
     private var typeField: some View {
         HStack(spacing: 0) {
             TextField("Ask the agent…", text: $draft)
-                .font(.system(size: 15, weight: .regular, design: .rounded))
+                .font(.system(size: Self.textSize, weight: .regular, design: .rounded))
                 .focused($fieldFocused)
                 .submitLabel(.send)
                 .onSubmit(send)
@@ -224,6 +269,155 @@ struct AgentControl: View {
     }
 }
 
+/// Text with a band of light sweeping across it, left to right, while something is in progress (as shadcn's
+/// Shimmer does): muted text, brightening as the band passes. Without `shimmering`, plain primary text.
+private struct ShimmerText: View {
+    let text: String
+    let shimmering: Bool
+    let reduceMotion: Bool
+
+    /// One sweep, then the next straight after.
+    private static let period = 2.0
+    /// The band's width, as a share of the text's.
+    private static let band = 0.5
+
+    var body: some View {
+        if shimmering && !reduceMotion {
+            TimelineView(.animation) { timeline in
+                let phase = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: Self.period)
+                    / Self.period
+                Text(text)
+                    .foregroundStyle(.secondary)
+                    .overlay {
+                        Text(text)
+                            .foregroundStyle(.primary)
+                            .mask { sweep(at: phase) }
+                    }
+            }
+        } else {
+            Text(text).foregroundStyle(shimmering ? .secondary : .primary)
+        }
+    }
+
+    /// The band, travelling from just before the text's start to just past its end.
+    private func sweep(at phase: Double) -> some View {
+        GeometryReader { geo in
+            let width = geo.size.width * Self.band
+            LinearGradient(colors: [.clear, .black, .clear], startPoint: .leading, endPoint: .trailing)
+                .frame(width: width)
+                .offset(x: -width + phase * (geo.size.width + width))
+        }
+    }
+}
+
+/// One line of words in the agent bar, growing at its right end. Words appear in place, filling the line from the
+/// left. Once it's full, each new word moves the line over by just that word, so the oldest slips out under the fade
+/// at the left edge as the newest arrives. Used for the agent's answer and for the person's words as they speak.
+private struct StreamingLine: View {
+    let words: [String]
+    let reduceMotion: Bool
+
+    @State private var lineWidth: CGFloat = 0
+    @State private var available: CGFloat = 0
+
+    /// How far the line has moved left to keep the newest word in view.
+    private var shift: CGFloat { min(0, available - lineWidth) }
+
+    var body: some View {
+        // The space is measured on its own, and the line laid over it, so the line can be wider than the bar
+        // without widening it.
+        Color.clear
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { available = $0 }
+            .overlay(alignment: .leading) { line.offset(x: shift) }
+            .clipped()
+            // Only once words have started to leave: the oldest fade out rather than being cut off.
+            .mask {
+                LinearGradient(stops: [.init(color: shift < 0 ? .clear : .black, location: 0),
+                                       .init(color: .black, location: 0.15)],
+                               startPoint: .leading, endPoint: .trailing)
+            }
+    }
+
+    private var line: some View {
+        HStack(spacing: 5) {
+            ForEach(Array(words.enumerated()), id: \.offset) { _, word in
+                Text(word)
+                    .transition(reduceMotion ? .opacity
+                                : .modifier(active: WordAppearing(shown: false), identity: WordAppearing(shown: true)))
+            }
+        }
+        .font(.system(size: AgentControl.textSize, weight: .regular, design: .rounded))
+        .foregroundStyle(.primary)
+        .lineLimit(1)
+        .fixedSize()
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { lineWidth = $0 }
+    }
+}
+
+/// The agent's answer streaming into the bar one word at a time: as each word is said when the answer is spoken,
+/// otherwise at about the pace it would be read aloud. After the last word has had time to be read, `finished`
+/// folds the bar back into the dot.
+private struct ReplyStream: View {
+    let reply: AgentReply
+    let reduceMotion: Bool
+    let finished: () -> Void
+
+    @State private var shown = 0
+
+    var body: some View {
+        StreamingLine(words: Array(reply.words.prefix(shown)), reduceMotion: reduceMotion)
+            .task(id: reply.id) { await play() }
+    }
+
+    private func play() async {
+        AccessibilityNotification.Announcement(reply.text).post()
+        let words = reply.words
+        let spoken = reply.wordStarts != nil
+        let starts = reply.wordStarts ?? Self.typedStarts(words)
+        let clock = ContinuousClock()
+        let began = clock.now
+        shown = 0
+        for index in words.indices {
+            // Timed from when the reply appeared, so a late word doesn't push the rest later.
+            let due = began + .milliseconds(Int(starts[index] * 1000))
+            guard (try? await clock.sleep(until: due)) != nil else { return }
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.2)) { shown = index + 1 }
+        }
+        // A spoken answer was heard as it went; a typed one gets a moment to finish reading the line.
+        guard (try? await Task.sleep(for: .seconds(spoken ? 0.9 : 1.6))) != nil else { return }
+        finished()
+    }
+
+    /// When each word comes when nothing is speaking them: briskly, about 0.12 s a word (a quick reading pace),
+    /// with a brief beat at a comma or the end of a sentence so it still reads in phrases.
+    private static func typedStarts(_ words: [String]) -> [TimeInterval] {
+        var time: TimeInterval = 0
+        return words.map { word in
+            defer {
+                time += 0.12
+                switch word.last {
+                case ".", "!", "?": time += 0.18
+                case ",", ";", ":", "\u{2014}": time += 0.07
+                default: break
+                }
+            }
+            return time
+        }
+    }
+}
+
+/// A word arriving in the bar: it sharpens and fades up where it stands.
+private struct WordAppearing: ViewModifier {
+    let shown: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown ? 1 : 0)
+            .blur(radius: shown ? 0 : 3)
+    }
+}
+
 /// The reveal inside the agent bar: 0 is still inside the dot, 1 is settled.
 private struct OutOfTheDot: ViewModifier {
     var progress: Double
@@ -237,22 +431,37 @@ private struct OutOfTheDot: ViewModifier {
     }
 }
 
-/// The blue dot with its halo. While listening, the halo and core breathe.
+/// The agent's control: a microphone that fills with blue as the sound gets louder, from the bottom up. Empty when
+/// it's quiet (or untouched: tap to talk), full when loud. While the agent speaks it's a speaker, filling with the
+/// agent's voice the same way.
 struct AgentOrb: View {
-    var listening: Bool
-    var reduceMotion: Bool
+    let model: CanvasModel
+    let reduceMotion: Bool
+
+    private var symbol: String { model.agent == .speaking ? "speaker.wave.2" : "mic" }
 
     var body: some View {
-        TimelineView(.animation(paused: !listening || reduceMotion)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            let level = listening && !reduceMotion ? (sin(t * 4) + 1) / 2 : 0
-            ZStack {
-                Circle().fill(Landing.blue.opacity(0.16)).frame(width: 28, height: 28)
-                    .scaleEffect(listening ? 0.75 + 0.45 * level : 1)
-                Circle().fill(Landing.blue).frame(width: 20, height: 20)
-                    .scaleEffect(listening ? 0.85 + 0.3 * level : 1)
-            }
+        // Only this view reads the level, so the rest of the bar doesn't redraw 30 times a second.
+        let live = model.agent == .listening || model.agent == .speaking
+        // With Reduce Motion, no flickering fill: full while it listens or speaks.
+        let level = live ? (reduceMotion ? 1 : model.level) : 0
+        ZStack {
+            Image(systemName: symbol)
+            Image(systemName: symbol + ".fill")
+                .mask(alignment: .bottom) {
+                    GeometryReader { geo in
+                        Rectangle()
+                            .frame(height: geo.size.height * level)
+                            .frame(maxHeight: .infinity, alignment: .bottom)
+                    }
+                }
+                // Readings come 10 to 30 times a second; a quick spring joins them into a smooth rise and fall.
+                .animation(.spring(response: 0.14, dampingFraction: 0.75), value: level)
         }
+        .imageScale(.large)
+        .foregroundStyle(Landing.blue)
+        .contentTransition(.symbolEffect(.replace))
+        .animation(.smooth(duration: 0.25), value: symbol)
         .accessibilityHidden(true)
     }
 }
@@ -353,6 +562,39 @@ struct ChoiceBanner: View {
 // MARK: - Bottom row
 
 /// "1 / 3", which opens the Pages popover, and + to add a page after this one.
+/// The page dots, as on the home screen: the system page control, so it looks and behaves the standard way (tap a
+/// side to step, drag along it to scrub, a platter behind it while you do, shrinking dots for long notes). Hidden
+/// for a single page. The dots are dark because they always sit on paper.
+struct PageDots: UIViewRepresentable {
+    let count: Int
+    let current: Int
+    let select: (Int) -> Void
+
+    func makeUIView(context: Context) -> UIPageControl {
+        let control = UIPageControl()
+        control.hidesForSinglePage = true
+        control.backgroundStyle = .automatic
+        control.pageIndicatorTintColor = UIColor(white: 0, alpha: 0.2)
+        control.currentPageIndicatorTintColor = UIColor(white: 0, alpha: 0.7)
+        control.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
+        return control
+    }
+
+    func updateUIView(_ control: UIPageControl, context: Context) {
+        context.coordinator.select = select
+        if control.numberOfPages != count { control.numberOfPages = count }
+        if control.currentPage != current { control.currentPage = current }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(select: select) }
+
+    final class Coordinator: NSObject {
+        var select: (Int) -> Void
+        init(select: @escaping (Int) -> Void) { self.select = select }
+        @objc func changed(_ control: UIPageControl) { select(control.currentPage) }
+    }
+}
+
 struct PagePill: View {
     let current: Int
     let count: Int

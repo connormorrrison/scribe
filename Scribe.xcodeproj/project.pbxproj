@@ -10,6 +10,7 @@
 		0CA0129A11C9832DE88247C4 /* Caveat-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = BDB34195BC271AA08CD75181 /* Caveat-OFL.txt */; };
 		1FBC3C7078AEA69EF13353CD /* LibraryComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9218C5FA0A854F8BA6DDF814 /* LibraryComponents.swift */; };
 		24E40CA6BA4B010023A41DA9 /* CanvasStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 342F06A17C09B5265B73A29A /* CanvasStore.swift */; };
+		36B1314359F7EF0935822D15 /* SpeechTimingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A02A59EDCEF98DF2BB89367 /* SpeechTimingTests.swift */; };
 		3B685F1084467D6DDEEF120E /* LandingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C746A923AB93043D4A2EF9ED /* LandingView.swift */; };
 		3F361F29058A0480D0BE6709 /* Caveat.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 4ED2E734490566000F0A1854 /* Caveat.ttf */; };
 		52FCCC00F01B9407405FFC55 /* DocumentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E7D00974B33FE33E399C2F9 /* DocumentsView.swift */; };
@@ -62,6 +63,7 @@
 		4ED2E734490566000F0A1854 /* Caveat.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Caveat.ttf; sourceTree = "<group>"; };
 		572ACD849DC28AE0C35FCA9B /* ScribeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScribeApp.swift; sourceTree = "<group>"; };
 		5A3180D2749FBC4F034A65EB /* LibraryScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryScreens.swift; sourceTree = "<group>"; };
+		6A02A59EDCEF98DF2BB89367 /* SpeechTimingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechTimingTests.swift; sourceTree = "<group>"; };
 		76C3F842C2A4F07CB4378424 /* CanvasChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasChrome.swift; sourceTree = "<group>"; };
 		7D24505520B2FD84A084D195 /* ToolPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolPalette.swift; sourceTree = "<group>"; };
 		7E779F3184B19AEAA00EAA17 /* PDFPages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFPages.swift; sourceTree = "<group>"; };
@@ -148,6 +150,7 @@
 			isa = PBXGroup;
 			children = (
 				40B2379145E73EF274E20C8D /* ClaudeReplyTests.swift */,
+				6A02A59EDCEF98DF2BB89367 /* SpeechTimingTests.swift */,
 				C5F94F6A37B544CB63AE47FE /* StorageTests.swift */,
 			);
 			path = ScribeTests;
@@ -311,6 +314,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F3BA2924E6C21615251B3A88 /* ClaudeReplyTests.swift in Sources */,
+				36B1314359F7EF0935822D15 /* SpeechTimingTests.swift in Sources */,
 				C4CF9AFD09B05EFACFA9892B /* StorageTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

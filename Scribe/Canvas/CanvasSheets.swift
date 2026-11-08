@@ -234,19 +234,21 @@ struct PageThumbnail: View {
 // MARK: - Conversation
 
 /// History, from More: presented like Settings, as a sheet with Done.
-struct HistorySheet: View {
+/// The conversation, in a popover from the History button. Oldest at the top, newest at the bottom.
+struct HistoryPopover: View {
     let model: CanvasModel
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            Text("History")
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 4)
             ConversationPanel(model: model)
-                .navigationTitle("History")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-                }
         }
+        .frame(width: 380, height: 540)
     }
 }
 
