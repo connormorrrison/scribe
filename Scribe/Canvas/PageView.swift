@@ -64,12 +64,16 @@ struct PageView: View {
     }
 }
 
-/// What a zooming page does with a pinch or double-tap on its paper. Points are in the page view's own (unscaled)
-/// coordinates.
+/// What a zooming page does with a pinch or double-tap on its paper.
+///
+/// - `began(anchor, fingers)`: `anchor` is the point under the fingers in the page view's own laid-out points;
+///   `fingers` is where they are in window points. Called again, with no anchor, whenever a finger lifts or lands
+///   mid-pinch (the pinch's centre moves; the page works out what's under it now).
+/// - `changed(scale, fingers)`: `scale` is relative to the last `began`; `fingers` in window points.
 struct PageZoomGestures {
-    var began: (CGPoint) -> Void
-    var changed: (CGFloat) -> Void
-    var ended: (CGFloat) -> Void
+    var began: (CGPoint?, CGPoint) -> Void
+    var changed: (CGFloat, CGPoint) -> Void
+    var ended: () -> Void
     var doubleTapped: (CGPoint) -> Void
 }
 
@@ -177,10 +181,13 @@ struct InkCanvas: UIViewRepresentable {
         }
         let contentSize = CGSize(width: NotePageMetrics.width * scale, height: pageHeight * scale)
         if canvas.contentSize != contentSize { canvas.contentSize = contentSize }
-        canvas.contentOffset = .zero
+        if canvas.contentOffset != .zero { canvas.contentOffset = .zero }
 
-        canvas.tool = model.palette.pencilKitTool
-        canvas.drawingPolicy = drawWithFinger ? .anyInput : .pencilOnly
+        // Only when they change: this runs on every update of the page, and handing PencilKit a tool is not free.
+        let tool = model.palette.pencilKitTool
+        if !coordinator.isCurrent(tool) { canvas.tool = tool }
+        let policy: PKCanvasViewDrawingPolicy = drawWithFinger ? .anyInput : .pencilOnly
+        if canvas.drawingPolicy != policy { canvas.drawingPolicy = policy }
 
         if coordinator.token != reloadToken { coordinator.load(into: canvas) }
     }
@@ -222,11 +229,67 @@ struct InkCanvas: UIViewRepresentable {
         @MainActor @objc func pinched(_ pinch: UIPinchGestureRecognizer) {
             guard let zoom, let view = pinch.view else { return }
             switch pinch.state {
-            case .began: zoom.began(pinch.location(in: view))
-            case .changed: zoom.changed(pinch.scale)
-            case .ended: zoom.ended(pinch.scale)
-            case .cancelled, .failed: zoom.ended(1)
+            case .began:
+                pauseScrolling(around: view)
+                restart(pinch, in: view, zoom: zoom, continuing: false)
+            case .changed:
+                // A finger lifting or landing moves the pinch's centre; start again from here so the page doesn't jump.
+                if pinch.numberOfTouches != pinchTouches { restart(pinch, in: view, zoom: zoom, continuing: true) }
+                zoom.changed(pinch.scale / pinchStartScale, pinch.location(in: nil))
+            case .ended, .cancelled, .failed:
+                resumeScrolling()
+                zoom.ended()
             default: break
+            }
+        }
+
+        private var pinchTouches = 0
+        private var pinchStartScale: CGFloat = 1
+        /// The scroll views (the page's own, and the pager) whose panning is paused for the pinch.
+        private var paused: [UIScrollView] = []
+
+        @MainActor private func restart(_ pinch: UIPinchGestureRecognizer, in view: UIView, zoom: PageZoomGestures,
+                                        continuing: Bool) {
+            pinchTouches = pinch.numberOfTouches
+            pinchStartScale = max(pinch.scale, 0.01)
+            zoom.began(continuing ? nil : pinch.location(in: view), pinch.location(in: nil))
+        }
+
+        /// While pinching, the pinch alone moves the page. Left on, the page's scroll view also panned with the two
+        /// fingers (and kept coasting from an earlier flick), moving the page under the anchor; at 1x, the pager
+        /// could turn the page mid-pinch.
+        @MainActor private func pauseScrolling(around view: UIView) {
+            resumeScrolling()
+            var next = view.superview
+            var first = true
+            while let current = next {
+                if let scroll = current as? UIScrollView, scroll.panGestureRecognizer.isEnabled {
+                    // Stops a flick's coasting on the page's own scroll view (not the pager's, which must land on a page).
+                    if first, scroll.isDecelerating { scroll.setContentOffset(scroll.contentOffset, animated: false) }
+                    scroll.panGestureRecognizer.isEnabled = false
+                    paused.append(scroll)
+                }
+                if current is UIScrollView { first = false }
+                next = current.superview
+            }
+        }
+
+        @MainActor private func resumeScrolling() {
+            // As the scroll view itself says: SwiftUI may have turned its scrolling off meanwhile.
+            for scroll in paused { scroll.panGestureRecognizer.isEnabled = scroll.isScrollEnabled }
+            paused = []
+        }
+
+        private var currentTool: PKTool?
+
+        /// Whether `tool` is what the canvas already has (and if not, remembers it as the canvas's tool).
+        func isCurrent(_ tool: PKTool) -> Bool {
+            defer { currentTool = tool }
+            switch (currentTool, tool) {
+            case let (a as PKInkingTool, b as PKInkingTool): return a == b
+            case let (a as PKEraserTool, b as PKEraserTool): return a == b
+            case (is PKLassoTool, is PKLassoTool): return true
+            default: return false
             }
         }
 

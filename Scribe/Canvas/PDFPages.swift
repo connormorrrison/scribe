@@ -126,6 +126,15 @@ struct PDFPageView: View {
 ///
 /// A PDF page sits on the desk, shown whole between the top and bottom controls. A blank page fills the screen edge
 /// to edge (a page written in the other orientation is taller, and scrolls up and down).
+///
+/// How a zoom stays smooth and keeps the ink in place:
+/// - While fingers are down, and while a zoom animates, the page is only *transformed* (`PageZoomTransform`): paper,
+///   PDF, photos, ink and cards are scaled and moved together as one picture, so nothing can slide against anything
+///   else. The transform follows the fingers: the point that was under them stays under them as they pinch and move.
+/// - Once the zoom comes to rest, the page is laid out again at the new size (so ink and PDF are sharp) and scrolled,
+///   in the same update, so the result looks exactly like the transform it replaces.
+/// - Layout itself is never animated: a `PKCanvasView` doesn't animate along with SwiftUI, so animating the page's
+///   size let the paper glide while the ink jumped straight to its new size. That was the ink moving on zoom.
 struct ZoomablePage: View {
     let model: CanvasModel
     let page: NotePage
@@ -135,14 +144,16 @@ struct ZoomablePage: View {
 
     private var onDesk: Bool { page.pdfPage != nil }
 
-    /// Zoom after the last pinch, 1 = the whole page fits.
+    /// Zoom the page is laid out at, 1 = the whole page fits.
     @State private var zoom: CGFloat = 1
-    /// The pinch in progress, shown as a scale effect until it ends (so the page lays out once per pinch).
-    @State private var pinch: CGFloat = 1
-    /// Where the pinch started, in the page's unscaled coordinates.
-    @State private var anchor: CGPoint = .zero
+    /// The pinch (or zoom animation) in progress, on top of `zoom`. Observed only by `PageZoomEffect`, so a pinch
+    /// redraws a transform, not the page.
+    @State private var transform = PageZoomTransform()
+    @State private var tracking = PinchTracking()
     @State private var position = ScrollPosition()
-    @State private var offset: CGPoint = .zero
+    /// The scroll view's latest geometry (offset, insets, size). Read only by the gestures, so it never re-lays out
+    /// the page.
+    @State private var scroll: ScrollGeometry?
 
     static let maxZoom: CGFloat = 4
     /// The same gap between the page and the controls above it as below it.
@@ -167,9 +178,9 @@ struct ZoomablePage: View {
         let height = page.height * width / NotePageMetrics.width
 
         ScrollView([.horizontal, .vertical]) {
-            PageView(model: model, page: page, width: width, background: background, drawWithFinger: drawWithFinger,
-                     zoom: gestures)
-                .scaleEffect(pinch, anchor: UnitPoint(x: anchor.x / max(width, 1), y: anchor.y / max(height, 1)))
+            PageZoomEffect(transform: transform,
+                           content: PageView(model: model, page: page, width: width, background: background,
+                                             drawWithFinger: drawWithFinger, zoom: gestures))
                 .shadow(color: .black.opacity(onDesk ? 0.06 : 0), radius: 12, y: 8)
                 .shadow(color: .black.opacity(onDesk ? 0.12 : 0), radius: 1.5, y: 1)
                 .padding(.horizontal, onDesk ? Self.side : 0)
@@ -178,7 +189,7 @@ struct ZoomablePage: View {
                 .frame(minWidth: size.width, minHeight: size.height, alignment: onDesk ? .center : .top)
         }
         .scrollPosition($position)
-        .onScrollGeometryChange(for: CGPoint.self) { $0.contentOffset } action: { _, new in offset = new }
+        .onScrollGeometryChange(for: ScrollGeometry.self) { $0 } action: { _, new in scroll = new }
         .scrollIndicators(.hidden)
         .scrollBounceBehavior(.basedOnSize)
         // Overrides the pager's setting: this page pans only while zoomed (or taller than the screen), and not while
@@ -186,35 +197,177 @@ struct ZoomablePage: View {
         .scrollDisabled((zoom <= 1 && height <= size.height + 0.5) || model.selectedImage != nil)
         .onChange(of: zoom) { _, new in model.pageZoomed = new > 1 }
         .onDisappear {
+            tracking.generation += 1
+            transform.scale = 1
+            transform.shift = .zero
             if zoom > 1 { zoom = 1; model.pageZoomed = false }
         }
     }
 
+    // MARK: Gestures
+
     private var gestures: PageZoomGestures {
         PageZoomGestures(
-            began: { point in anchor = point },
-            changed: { scale in
-                // Not below fit, nor past the maximum, with a little give at both ends.
-                pinch = min(max(scale, 0.8 / zoom), Self.maxZoom * 1.15 / zoom)
+            began: { anchor, fingers in
+                // A new pinch takes over from any zoom still animating; that zoom's layout never happens.
+                tracking.generation += 1
+                // Mid-pinch (a finger lifted or landed): the point now under the fingers, from the one that was.
+                tracking.anchor = anchor ?? CGPoint(
+                    x: tracking.anchor.x + (fingers.x - tracking.last.x) / transform.scale,
+                    y: tracking.anchor.y + (fingers.y - tracking.last.y) / transform.scale)
+                tracking.fingers = fingers
+                tracking.last = fingers
+                tracking.scale = transform.scale
+                tracking.shift = transform.shift
             },
-            ended: { scale in settle(to: zoom * scale) },
-            doubleTapped: { point in
-                anchor = point
-                settle(to: zoom > 1.01 ? 1 : 2.5)
+            changed: { scale, fingers in
+                let newScale = Self.rubberBand(zoom * tracking.scale * scale) / zoom
+                // The anchor (a point on the page) stays under the fingers, wherever they move.
+                let a = tracking.anchor
+                tracking.last = fingers
+                transform.scale = newScale
+                transform.shift = CGSize(
+                    width: tracking.shift.width + fingers.x - tracking.fingers.x + a.x * (tracking.scale - newScale),
+                    height: tracking.shift.height + fingers.y - tracking.fingers.y + a.y * (tracking.scale - newScale))
+            },
+            ended: { settle(to: zoom * transform.scale, anchor: tracking.anchor) },
+            doubleTapped: { anchor in
+                tracking.generation += 1
+                settle(to: zoom * transform.scale > 1.01 ? 1 : 2.5, anchor: anchor)
             })
     }
 
-    /// Lays the page out at the new zoom and scrolls so the point under the fingers stays there.
-    private func settle(to target: CGFloat) {
+    /// Past the limits a pinch still gives a little, less the further it goes, so the page never stops dead.
+    private static func rubberBand(_ zoom: CGFloat) -> CGFloat {
+        if zoom > maxZoom { return maxZoom * pow(zoom / maxZoom, 0.3) }
+        if zoom < 1 { return pow(max(zoom, 0.01), 0.3) }
+        return zoom
+    }
+
+    // MARK: Settling
+
+    /// Brings the zoom to `target` (within limits), keeping `anchor` (a point on the page, in its laid-out points)
+    /// where it is on screen as far as the edges allow. Animates the transform only, then lays the page out.
+    private func settle(to target: CGFloat, anchor: CGPoint) {
         let newZoom = min(max(target, 1), Self.maxZoom)
         let ratio = newZoom / zoom
-        let point = CGPoint(x: max(0, offset.x + anchor.x * (ratio - 1)), y: max(0, offset.y + anchor.y * (ratio - 1)))
-        withAnimation(.snappy(duration: 0.25)) {
+        let offset = scroll?.contentOffset ?? .zero
+        let old = pageOrigin(at: zoom)
+        let new = pageOrigin(at: newZoom)
+        // Where the anchor is now (content), and the offset that puts it at the same place on screen after.
+        let here = CGPoint(x: old.x + anchor.x * transform.scale + transform.shift.width,
+                           y: old.y + anchor.y * transform.scale + transform.shift.height)
+        let wanted = clampedOffset(CGPoint(x: new.x + anchor.x * ratio - (here.x - offset.x),
+                                           y: new.y + anchor.y * ratio - (here.y - offset.y)), at: newZoom)
+        // The same end state, as a transform on the current layout.
+        let shift = CGSize(width: new.x - old.x - (wanted.x - offset.x), height: new.y - old.y - (wanted.y - offset.y))
+
+        tracking.generation += 1
+        let generation = tracking.generation
+        let still = abs(transform.scale - ratio) < 0.001
+            && abs(transform.shift.width - shift.width) < 0.5 && abs(transform.shift.height - shift.height) < 0.5
+        if still {
+            // A pinch that ended within limits: what's on screen is already the end state.
+            transform.scale = ratio
+            transform.shift = shift
+            commit()
+            return
+        }
+        withAnimation(.snappy(duration: 0.28)) {
+            transform.scale = ratio
+            transform.shift = shift
+        } completion: {
+            // Skipped if a new pinch or double-tap took over meanwhile.
+            if tracking.generation == generation { commit() }
+        }
+    }
+
+    /// Replaces the transform with layout: lays the page out at the zoom it shows, and scrolls so it lands exactly
+    /// where the transform had it. Both happen in one update, without animation, so nothing on screen moves.
+    private func commit() {
+        let newZoom = min(max(zoom * transform.scale, 1), Self.maxZoom)
+        let offset = scroll?.contentOffset ?? .zero
+        let old = pageOrigin(at: zoom)
+        let new = pageOrigin(at: newZoom)
+        let target = clampedOffset(CGPoint(x: new.x - old.x - transform.shift.width + offset.x,
+                                           y: new.y - old.y - transform.shift.height + offset.y), at: newZoom)
+        var still = Transaction()
+        still.disablesAnimations = true
+        withTransaction(still) {
             zoom = newZoom
-            pinch = 1
+            transform.scale = 1
+            transform.shift = .zero
+            if abs(target.x - offset.x) > 0.01 || abs(target.y - offset.y) > 0.01 {
+                position.scrollTo(point: target)
+            }
         }
-        Task { @MainActor in
-            if newZoom <= 1 { position.scrollTo(point: .zero) } else { position.scrollTo(point: point) }
-        }
+    }
+
+    // MARK: Layout, as the scroll view sees it
+
+    /// The page's top-left corner in the scroll view's content, laid out at `zoom` (mirrors the padding and frame in
+    /// `body`).
+    private func pageOrigin(at zoom: CGFloat) -> CGPoint {
+        let width = fitWidth * zoom
+        let height = page.height * width / NotePageMetrics.width
+        let side = onDesk ? Self.side : 0
+        let x = max(0, size.width - (width + 2 * side)) / 2 + side
+        guard onDesk else { return CGPoint(x: x, y: 0) }
+        return CGPoint(x: x, y: max(0, size.height - (height + top + bottom)) / 2 + top)
+    }
+
+    /// The scroll view's content size with the page laid out at `zoom`.
+    private func contentSize(at zoom: CGFloat) -> CGSize {
+        let width = fitWidth * zoom
+        let height = page.height * width / NotePageMetrics.width
+        guard onDesk else { return CGSize(width: max(size.width, width), height: max(size.height, height)) }
+        return CGSize(width: max(size.width, width + 2 * Self.side), height: max(size.height, height + top + bottom))
+    }
+
+    /// `offset` kept within what the scroll view can show at `zoom`.
+    private func clampedOffset(_ offset: CGPoint, at zoom: CGFloat) -> CGPoint {
+        let content = contentSize(at: zoom)
+        let container = scroll?.containerSize ?? size
+        let insets = scroll?.contentInsets ?? EdgeInsets()
+        let minX = -insets.leading, minY = -insets.top
+        let maxX = max(minX, content.width + insets.trailing - container.width)
+        let maxY = max(minY, content.height + insets.bottom - container.height)
+        return CGPoint(x: min(max(offset.x, minX), maxX), y: min(max(offset.y, minY), maxY))
+    }
+}
+
+/// A zoom in progress, as a transform on the laid-out page: a point `p` on the page (in its laid-out points) is drawn
+/// at `p * scale + shift` from the page's corner.
+@Observable @MainActor
+final class PageZoomTransform {
+    var scale: CGFloat = 1
+    var shift: CGSize = .zero
+}
+
+/// Where the current pinch started, in the terms it's followed in. Not observed: it never redraws anything.
+@MainActor
+private final class PinchTracking {
+    /// The point on the page under the fingers, in the page's laid-out points.
+    var anchor: CGPoint = .zero
+    /// The fingers when the pinch started, and at its last change, in window points.
+    var fingers: CGPoint = .zero
+    var last: CGPoint = .zero
+    /// The transform when the pinch started.
+    var scale: CGFloat = 1
+    var shift: CGSize = .zero
+    /// Bumped by every pinch and zoom, so an animation that finishes after a newer one started doesn't lay out.
+    var generation = 0
+}
+
+/// Applies the zoom transform to the page. Only this view reads the transform, so during a pinch SwiftUI redraws a
+/// scale and an offset; the page inside (PencilKit, the PDF, photos) is left alone.
+private struct PageZoomEffect<Content: View>: View {
+    let transform: PageZoomTransform
+    let content: Content
+
+    var body: some View {
+        content
+            .scaleEffect(transform.scale, anchor: .topLeading)
+            .offset(transform.shift)
     }
 }
