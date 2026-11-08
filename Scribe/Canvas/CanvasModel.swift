@@ -136,6 +136,8 @@ final class CanvasModel {
     var visualizationErrors: [UUID: String] = [:]
     var visualizationReloads: [UUID: Int] = [:]
     var enlargedVisualization: Visualization?
+    /// The card just closed, while its Undo shows.
+    var closedVisualization: ClosedVisualization?
     private(set) var clocks: [UUID: AnimationClock] = [:]
 
     // MARK: Undo
@@ -429,20 +431,30 @@ final class CanvasModel {
         showsVisualizations = true
     }
 
-    /// Makes a card taller or shorter. One undo step.
-    func resizeVisualization(_ id: UUID, to height: CGFloat) {
-        let range = Visualization.resizableHeights
-        let height = min(max(height, range.lowerBound), range.upperBound)
-        edit("Resize Visualization", reload: false) {
-            guard let i = $0.visualizations.firstIndex(where: { $0.id == id }) else { return }
-            $0.visualizations[i].height = height
-        }
-    }
-
+    /// Closes a card. It can come back: an Undo shows in its place for a while (and Undo in the toolbar works too).
     func closeVisualization(_ id: UUID) {
+        guard let index = content.visualizations.firstIndex(where: { $0.id == id }) else { return }
+        let visualization = content.visualizations[index]
         edit("Close Visualization", reload: false) { $0.visualizations.removeAll { $0.id == id } }
         visualizationReadouts[id] = nil
         visualizationErrors[id] = nil
+        closedVisualization = ClosedVisualization(visualization: visualization, index: index)
+        let closed = closedVisualization?.id
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            if let self, self.closedVisualization?.id == closed { self.closedVisualization = nil }
+        }
+    }
+
+    /// Brings back the card just closed, where it was.
+    func reopenClosedVisualization() {
+        guard let closed = closedVisualization else { return }
+        closedVisualization = nil
+        guard !content.visualizations.contains(where: { $0.id == closed.visualization.id }) else { return }
+        edit("Reopen Visualization", reload: false) {
+            $0.visualizations.insert(closed.visualization, at: min(closed.index, $0.visualizations.count))
+        }
+        showsVisualizations = true
     }
 
     /// Replay: the page starts over.
@@ -830,8 +842,10 @@ final class CanvasModel {
         unless they ask for more. You can't see or change their pages yet, so don't claim to.
 
         You can show things, though. When they ask to see, visualize, show, model or simulate something, or a picture \
-        or 3D model would explain it far better than words, call \(VisualizationTool.name): it opens as a card in the top right, over their page. Say one short line first if you like, then make it, then tell them in one short sentence what to \
-        try. Never describe the code or read the page out.\(open)
+        or 3D model would explain it far better than words, call \(VisualizationTool.name): it opens as a card in the top \
+        right, over their page. Make it something to play with, with controls for what matters, not just a picture. \
+        Say one short line first if you like, then make it, then tell them in one short sentence what to try. Never \
+        describe the code or read the page out.\(open)
         """
     }
 
@@ -873,4 +887,11 @@ extension UIColor {
         func byte(_ v: CGFloat) -> Int { Int((min(max(v, 0), 1) * 255).rounded()) }
         return String(format: "#%02X%02X%02X", byte(r), byte(g), byte(b))
     }
+}
+
+/// A card that was just closed, and where it was in the stack.
+struct ClosedVisualization: Identifiable {
+    let id = UUID()
+    let visualization: Visualization
+    let index: Int
 }

@@ -71,6 +71,22 @@ final class VisualizationTests: XCTestCase {
         XCTAssertTrue(whole.contains("<head><meta charset"))
     }
 
+    @MainActor
+    func testClosedCardCanBeReopenedWhereItWas() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vis-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = CanvasStore(directory: root)
+        let model = CanvasModel(store: store, document: store.createNote(title: "Cards", in: nil))
+        for title in ["A", "B", "C"] { model.addVisualization(Visualization(title: title, html: "<p>\(title)</p>")) }
+        let b = model.content.visualizations[1].id
+        model.closeVisualization(b)
+        XCTAssertEqual(model.content.visualizations.map(\.title), ["A", "C"])
+        XCTAssertEqual(model.closedVisualization?.visualization.title, "B")
+        model.reopenClosedVisualization()
+        XCTAssertEqual(model.content.visualizations.map(\.title), ["A", "B", "C"])
+        XCTAssertNil(model.closedVisualization)
+    }
+
     // MARK: The sandbox, for real
 
     @MainActor

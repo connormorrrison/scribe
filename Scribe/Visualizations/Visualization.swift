@@ -18,8 +18,6 @@ struct Visualization: Identifiable, Codable, Equatable {
     static let defaultHeight: CGFloat = 300
     /// The heights the agent (or the page itself) may ask for.
     static let heights: ClosedRange<CGFloat> = 220...560
-    /// The heights the person can drag a card to.
-    static let resizableHeights: ClosedRange<CGFloat> = 160...760
     /// The largest page the agent may send, in UTF-8 bytes.
     static let maxBytes = 80_000
 }
@@ -40,7 +38,11 @@ enum VisualizationTool {
         already scaled for the screen; width/height stay current, redraw in Card.onResize(fn). \
         Card.timeline({duration: s, phases: [["Build", 1], ["Spin", 2]], onFrame: t => draw(t), loop: false}) adds the \
         app's play/scrub bar and plays once by itself (t 0→1; phases are relative shares); Card.phase(t, i) is the eased \
-        progress through phase i. Card.slider({label, min, max, value, step, onInput: v => …}) adds a slider above it. \
+        progress through phase i. Card.slider({label, min, max, value, step, onInput: v => …, format: v => text}) adds a \
+        slider above it (label: a symbol like θ or <i>n</i>, or one short word). Card.choice({label, options: ["Sine", \
+        "Cosine"] or [["Sine", "sin"], …], value, onChange: v => …}) adds a row of buttons, one chosen (shapes, modes, \
+        functions, presets). Card.toggle({label: "Tangent", value: true, onChange: on => …}) adds an on/off button (show \
+        or hide a part, a trail, labels, axes); toggles share one row. Each returns {value, set(v)}. \
         Card.readout(text) sets the live readout in the card's header. Card.ease(t), Card.lerp(a, b, t), Card.clamp(x, a, b). \
         Card.color.curve etc. hold the colours above. \
         3D: load <script src="app://lib/three.min.js"></script> (three r149, global THREE; no addons, no OrbitControls) \
@@ -60,18 +62,30 @@ enum VisualizationTool {
         wave, secant → tangent), or data with a slider to explore. Prefer 3D (three.js) whenever the subject is a \
         physical object or a shape in space. \
         Each call adds one new visualization below the earlier ones; keep it focused on one idea. \
+        Give almost every visualization controls, so the person can play with it rather than just watch: one to three \
+        Card.slider for the quantities that matter (an angle, a speed, a mass, a number of sides, n, a frequency, a \
+        coefficient), Card.choice to switch between cases, Card.toggle to show or hide parts, and Card.timeline when it \
+        plays out over time. Every control changes the picture live, and the readout shows the numbers it changes. \
+        Only leave controls out when there is truly nothing to vary. \
         The page: one self-contained document ≤ 60 KB, `height` pt tall (default \(Int(Visualization.defaultHeight))) and \
-        300–400 pt wide depending on the screen (the person can also make it taller or shorter); size everything from the stage's width and height, never fixed pixels. \
+        300–400 pt wide depending on the screen (the person can also enlarge it to fill the screen); the controls take \
+        about 44 pt each from that height, so make `height` taller when there are several. Size everything from the \
+        stage's width and height, never fixed pixels. \
         No network, no storage, no alerts, no external URLs; everything inline. Make it animate by itself at first, then \
         let the person drag, scrub or slide. Keep the maths and science right: compute values in code, don't hard-code \
-        them. The app shows `title` and `caption` around the page; don't draw your own title bar. \
+        them. The app shows `title` and `caption` around the page; don't draw your own title bar. The title just \
+        names the thing, as a heading would ("The solar system", "Pendulum", "A cube's faces"): never add "in 3D", \
+        "visualization", "interactive", "model of" or the like. \
         \(cardKit) \
         If the page throws an error while loading, or draws nothing, you get the problem back: fix it and call \
         \(name) once more. \
-        Example: {"title": "A cube has 6 faces", "caption": "Drag to turn it.", "height": 360, "html": \
-        "<script src=\\"app://lib/three.min.js\\"></script><script>const v = Card.three({distance: 4}); \
-        const cube = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.6, 1.6), new THREE.MeshStandardMaterial({color: Card.color.curve})); \
-        v.scene.add(cube); v.label('6 faces', [0, 1.3, 0]);</script>"}
+        Example: {"title": "Prisms", "caption": "Drag to turn it; change the number of sides.", "height": 380, "html": \
+        "<script src=\\"app://lib/three.min.js\\"></script><script>const v = Card.three({distance: 5}); \
+        const mat = new THREE.MeshStandardMaterial({color: Card.color.curve}); let prism; \
+        function build(n) { if (prism) v.scene.remove(prism); prism = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 1.8, n), mat); \
+        v.scene.add(prism); Card.readout(`faces: ${n + 2} · edges: ${3 * n} · vertices: ${2 * n}`); } \
+        build(4); Card.slider({label: 'sides', min: 3, max: 12, step: 1, value: 4, onInput: build}); \
+        Card.toggle({label: 'Wireframe', value: false, onChange: on => { mat.wireframe = on; }});</script>"}
         """
 
     static var definition: JSONValue {
@@ -81,10 +95,10 @@ enum VisualizationTool {
             "input_schema": [
                 "type": "object",
                 "properties": [
-                    "title": ["type": "string", "description": "Short, ≤ 6 words. Maths may use ^ (f(x) = x^3)."],
+                    "title": ["type": "string", "description": "What it shows, as a plain heading, ≤ 5 words (\"The solar system\", \"Pendulum\"); never \"in 3D\" or \"visualization\". Maths may use ^ (f(x) = x^3)."],
                     "html": ["type": "string", "description": "The whole page, ≤ 60 KB."],
-                    "caption": ["type": "string", "description": "One line under the card: what the person can try (\"Drag to turn it.\")."],
-                    "height": ["type": "number", "description": "Page height in points, 220–560. Default 300."]
+                    "caption": ["type": "string", "description": "One line under the card: what the person can try with it (\"Drag to turn it; slide the angle.\")."],
+                    "height": ["type": "number", "description": "Page height in points, controls included, 220–560. Default 300."]
                 ],
                 "required": ["title", "html"],
                 "additionalProperties": false

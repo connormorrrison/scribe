@@ -51,7 +51,7 @@ struct CanvasView: View {
             .allowsHitTesting(!showsMore)
 
             // The agent's visualizations, hovering over the page in the top right.
-            if model.hasVisualizations {
+            if model.hasVisualizations || model.closedVisualization != nil {
                 GeometryReader { screen in
                     VisualizationStack(model: model, screen: screen.size, top: (model.deskTop ?? 72) + 12,
                                        bottom: (model.deskBottom ?? screen.size.height - 96) - 12)

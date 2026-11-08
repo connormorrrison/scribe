@@ -56,10 +56,12 @@ struct VisualizationStack: View {
         // Not lazy, and not a system scroll view (around web views it paints over the page): every card keeps running,
         // and the stack scrolls by its title bars and captions (`grab`).
         VStack(spacing: 16) {
-            ForEach(model.content.visualizations) { visualization in
+            ForEach(Array(model.content.visualizations.enumerated()), id: \.element.id) { index, visualization in
+                if closed?.index == index { closedRow }
                 VisualizationCard(model: model, visualization: visualization, grab: grab)
                     .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
+            if let closed, closed.index >= model.content.visualizations.count { closedRow }
             if model.draftingVisualization {
                 VisualizationPlaceholder()
                     .transition(.opacity)
@@ -89,6 +91,47 @@ struct VisualizationStack: View {
                 scroll = min(max(scroll + (edge == .top ? -room * 0.8 : room * 0.8), 0), maxScroll)
             }
         }
+    }
+
+    /// The card just closed, unless it's already back (Undo in the toolbar).
+    private var closed: ClosedVisualization? {
+        guard let closed = model.closedVisualization,
+              !model.content.visualizations.contains(where: { $0.id == closed.visualization.id }) else { return nil }
+        return closed
+    }
+
+    /// Where a closed card was, for a few seconds: its title, and Undo to bring it back.
+    private var closedRow: some View {
+        HStack(spacing: 8) {
+            Text("Closed “\(closed?.visualization.title ?? "")”")
+                .font(.system(size: 15, weight: .regular, design: .rounded))
+                .foregroundStyle(.white.opacity(0.7))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                withAnimation(.snappy) { model.reopenClosedVisualization() }
+            } label: {
+                Text("Undo")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 44)
+                    .background(Capsule().fill(.white.opacity(0.14)))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.leading, 18)
+        .padding(.trailing, 8)
+        .padding(.vertical, 8)
+        .background {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Landing.card)
+                .shadow(color: .black.opacity(0.22), radius: 12, y: 6)
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+        .accessibilityElement(children: .combine)
+        .accessibilityAction(named: "Undo Close") { model.reopenClosedVisualization() }
     }
 
     /// Scrolls to the bottom, where the newest card (or the one on its way) is, once it's been laid out.
@@ -164,15 +207,12 @@ struct VisualizationStack: View {
 }
 
 /// One visualization: a dark card with its title (and the page's live readout), Replay, Enlarge and Close, the page
-/// itself, and a footer with its caption and a grabber for its height. All of it on the card, so it reads the same
-/// over any page.
+/// itself, and its caption. All of it on the card, so it reads the same over any page.
 struct VisualizationCard<Grab: Gesture>: View {
     let model: CanvasModel
     let visualization: Visualization
     /// Scrolls the cards, or flicks them away, from the title bar or the caption.
     let grab: Grab
-    /// The page's height while its handle is being dragged.
-    @State private var dragHeight: CGFloat?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -193,7 +233,7 @@ struct VisualizationCard<Grab: Gesture>: View {
                 WebCardView(html: visualization.html, reload: model.visualizationReloads[visualization.id] ?? 0) { message in
                     model.visualizationMessage(message, from: visualization.id)
                 }
-                .frame(height: dragHeight ?? visualization.height)
+                .frame(height: visualization.height)
                 .overlay(alignment: .bottom) { StageError(message: model.visualizationErrors[visualization.id]) }
                 footer
         }
@@ -209,46 +249,22 @@ struct VisualizationCard<Grab: Gesture>: View {
         .accessibilityLabel(visualization.title)
     }
 
-    /// The caption, and a grabber at the bottom edge: drag it down or up to make the card taller or shorter.
-    private var footer: some View {
-        VStack(spacing: 6) {
-            if let caption = visualization.caption {
-                Text(caption)
-                    .font(.system(size: 13, weight: .regular, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                    .contentShape(Rectangle())
-                    .gesture(grab)
-            }
-            heightHandle
+    /// The caption: what to try. Without one, just a little room under the page.
+    @ViewBuilder private var footer: some View {
+        if let caption = visualization.caption {
+            Text(caption)
+                .font(.system(size: 13, weight: .regular, design: .rounded))
+                .foregroundStyle(.white.opacity(0.6))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 14)
+                .contentShape(Rectangle())
+                .gesture(grab)
+        } else {
+            Color.clear.frame(height: 10)
         }
-    }
-
-    private var heightHandle: some View {
-        Capsule()
-            .fill(Color.white.opacity(0.3))
-            .frame(width: 36, height: 5)
-            .frame(maxWidth: .infinity)
-            .frame(height: 20)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                    .onChanged { value in
-                        let range = Visualization.resizableHeights
-                        dragHeight = min(max(visualization.height + value.translation.height, range.lowerBound), range.upperBound)
-                    }
-                    .onEnded { _ in
-                        if let height = dragHeight { model.resizeVisualization(visualization.id, to: height) }
-                        dragHeight = nil
-                    }
-            )
-            .accessibilityLabel("Resize \(visualization.title)")
-            .accessibilityAdjustableAction { direction in
-                model.resizeVisualization(visualization.id, to: visualization.height + (direction == .increment ? 40 : -40))
-            }
     }
 }
 

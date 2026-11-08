@@ -159,6 +159,71 @@
     return api;
   };
 
+  /**
+   * A row of buttons in the dock, one of which is chosen: {label?, options: ['Sine', 'Cosine'] or [['Sine', 'sin'], …],
+   * value, onChange(v)}. Returns {value, set(v)}.
+   */
+  Card.choice = function (o) {
+    var row = document.createElement('div');
+    row.className = 'card-buttons';
+    if (o.label) {
+      var label = document.createElement('label');
+      label.innerHTML = o.label;
+      row.appendChild(label);
+    }
+    var options = (o.options || []).map(function (x) { return Array.isArray(x) ? x : [x, x]; });
+    var value = o.value != null ? o.value : (options[0] || [])[1];
+    var buttons = options.map(function (x) {
+      var b = document.createElement('button');
+      b.className = 'card-button';
+      b.innerHTML = x[0];
+      b.addEventListener('click', function () {
+        if (value === x[1]) return;
+        api.set(x[1]);
+        if (o.onChange) o.onChange(x[1]);
+      });
+      row.appendChild(b);
+      return b;
+    });
+    var api = {
+      get value() { return value; },
+      set: function (v) {
+        value = v;
+        buttons.forEach(function (b, i) { b.classList.toggle('on', options[i][1] === v); });
+      }
+    };
+    api.set(value);
+    ensureDock().insertBefore(row, timelineRow);
+    layoutChanged();
+    return api;
+  };
+
+  /** An on/off button in the dock (toggles share one row): {label, value, onChange(on)}. Returns {value, set(on)}. */
+  var toggleRow = null;
+  Card.toggle = function (o) {
+    if (!toggleRow) {
+      toggleRow = document.createElement('div');
+      toggleRow.className = 'card-buttons';
+      ensureDock().insertBefore(toggleRow, timelineRow);
+    }
+    var on = !!o.value;
+    var b = document.createElement('button');
+    b.className = 'card-button card-toggle';
+    b.innerHTML = o.label || '';
+    var api = {
+      get value() { return on; },
+      set: function (v) { on = !!v; b.classList.toggle('on', on); }
+    };
+    api.set(on);
+    b.addEventListener('click', function () {
+      api.set(!on);
+      if (o.onChange) o.onChange(on);
+    });
+    toggleRow.appendChild(b);
+    layoutChanged();
+    return api;
+  };
+
   // MARK: Timeline
 
   var timelines = [];
