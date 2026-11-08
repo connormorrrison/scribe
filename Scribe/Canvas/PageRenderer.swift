@@ -20,7 +20,8 @@ struct PageSnapshot: View {
             Color.white
             if let index = page.pdfPage {
                 if let paper = pdfImage(index) {
-                    Image(uiImage: paper).resizable().frame(width: page.bounds.width, height: page.bounds.height)
+                    // At its own shape, from the top: a page that was once made taller never stretches the PDF.
+                    Image(uiImage: paper).resizable().aspectRatio(contentMode: .fit).frame(width: page.bounds.width)
                 }
             } else {
                 PageBackgroundView(style: background, regions: [page.bounds],
@@ -82,6 +83,8 @@ final class NoteThumbnails {
         var image: UIImage
         /// Something sits below what a landscape tile shows of the page's top, so the whole page is shown instead.
         var showsWholePage: Bool
+        /// Each visualization card that's out (not tucked away), oldest first.
+        var cards: [ThumbnailVisualizations.Card] = []
     }
 
     private static let pixelWidth: CGFloat = 640
@@ -111,7 +114,12 @@ final class NoteThumbnails {
         let rendered = PageRenderer.image(of: page, background: content.background ?? defaultBackground,
                                           pixelWidth: Self.pixelWidth, pdf: pdf) { images[$0] }
         guard let rendered else { return nil }
-        let thumbnail = Thumbnail(image: rendered, showsWholePage: Self.contentBottom(page) > Self.topCropHeight)
+        let cards = content.hidesVisualizations ? [] : content.visualizations.map {
+            ThumbnailVisualizations.Card(aspect: (VisualizationCardShape.header + $0.height) / Visualization.pageWidth,
+                                         image: file.visualizationImage($0.id))
+        }
+        let thumbnail = Thumbnail(image: rendered, showsWholePage: Self.contentBottom(page) > Self.topCropHeight,
+                                  cards: cards)
         cache[documentID] = (key, thumbnail)
         return thumbnail
     }
@@ -157,6 +165,9 @@ struct NoteThumbnail: View {
                     NotePaper()
                 }
             }
+            .overlay {
+                if let cards = thumbnail?.cards, !cards.isEmpty { ThumbnailVisualizations(cards: cards) }
+            }
             .clipped()
             .task(id: "\(document.id)-\(version)-\(background.rawValue)") {
                 thumbnail = NoteThumbnails.shared.thumbnail(for: document.id,
@@ -165,5 +176,92 @@ struct NoteThumbnail: View {
                                                                 ? store?.fileURL(for: document) : nil,
                                                             defaultBackground: background)
             }
+    }
+}
+
+/// The proportions of a visualization card on the page, for drawing it small.
+enum VisualizationCardShape {
+    /// The title bar above the page, and the room under it (`VisualizationCard`).
+    static let header: CGFloat = 48 + 6
+}
+
+/// The visualizations that are out, drawn small in the tile's top right as they hover over the note: dark cards with a
+/// title bar and a picture of the page as it started (a curve for one not pictured yet), at the size they have on a
+/// landscape screen. Cards tucked away aren't drawn.
+struct ThumbnailVisualizations: View {
+    struct Card {
+        /// Height over width, title bar included.
+        var aspect: CGFloat
+        /// The page soon after it started (`WebCardView.onSnapshot`), once it's been on screen.
+        var image: UIImage?
+    }
+
+    /// Oldest first.
+    let cards: [Card]
+
+    /// The landscape screen the tile stands for, in points.
+    private static let screenWidth: CGFloat = LibraryMetrics.screenSize.width
+    private static let top: CGFloat = 76
+    private static let margin: CGFloat = 16
+
+    var body: some View {
+        GeometryReader { geo in
+            let scale = geo.size.width / Self.screenWidth
+            let width = VisualizationStack.cardWidth(for: Self.screenWidth) * scale
+            VStack(spacing: 16 * scale) {
+                ForEach(cards.indices, id: \.self) { index in
+                    card(cards[index], width: width, height: width * cards[index].aspect, scale: scale)
+                }
+            }
+            .padding(.top, Self.top * scale)
+            .padding(.trailing, Self.margin * scale)
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .topTrailing)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func card(_ card: Card, width: CGFloat, height: CGFloat, scale: CGFloat) -> some View {
+        let header = 48 * scale
+        let shape = RoundedRectangle(cornerRadius: 18 * scale, style: .continuous)
+        return VStack(alignment: .leading, spacing: 0) {
+            // The title, as a line.
+            Capsule()
+                .fill(.white.opacity(0.85))
+                .frame(width: width * 0.4, height: max(1.5, 10 * scale))
+                .padding(.leading, 16 * scale)
+                .frame(height: header)
+            if let image = card.image {
+                Image(uiImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: width, height: max(0, height - header - 6 * scale), alignment: .top)
+                    .clipped()
+            } else {
+                Wave()
+                    .stroke(Landing.cyan,
+                            style: StrokeStyle(lineWidth: max(1, 3 * scale), lineCap: .round))
+                    .padding(.horizontal, width * 0.12)
+                    .padding(.vertical, (height - header) * 0.22)
+            }
+        }
+        .frame(width: width, height: height, alignment: .top)
+        .clipShape(shape)
+        .background(shape.fill(Landing.card).shadow(color: .black.opacity(0.22), radius: 12 * scale, y: 6 * scale))
+    }
+
+    /// One period of a sine wave across the rect.
+    private struct Wave: Shape {
+        func path(in rect: CGRect) -> Path {
+            Path { path in
+                let steps = 48
+                for step in 0...steps {
+                    let t = CGFloat(step) / CGFloat(steps)
+                    let point = CGPoint(x: rect.minX + t * rect.width,
+                                        y: rect.midY - sin(t * 2 * .pi) * rect.height / 2)
+                    if step == 0 { path.move(to: point) } else { path.addLine(to: point) }
+                }
+            }
+        }
     }
 }

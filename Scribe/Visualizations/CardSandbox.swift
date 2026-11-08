@@ -5,7 +5,7 @@ import WebKit
 /// - JavaScript on, but no network: a CSP with `connect-src 'none'`, a content rule list that blocks every URL except
 ///   `app:`, `data:`, `blob:` and `about:`, and an `app://` scheme handler that serves only the bundled files below;
 /// - no file access, a non-persistent data store, no navigation away from the page, no popups;
-/// - the page talks to the app only through `card` messages (ready, error, focus, resize, readout);
+/// - the page talks to the app only through `card` messages (ready, error, focus, resize, paused);
 /// - the card kit (Web/card-kit.js) and the dark stylesheet (Web/card.css) are injected before the page's own scripts.
 enum CardSandbox {
     static let scheme = "app"
@@ -27,12 +27,10 @@ enum CardSandbox {
     /// The only files a page can load: app://lib/<name>.
     static let library: [String: (resource: String, ext: String, mime: String)] = [
         "three.min.js": ("three.min", "js", "text/javascript"),
-        "d3.min.js": ("d3.min", "js", "text/javascript"),
-        "STIXTwoText.ttf": ("STIXTwoText", "ttf", "font/ttf"),
-        "STIXTwoText-Italic.ttf": ("STIXTwoText-Italic", "ttf", "font/ttf")
+        "d3.min.js": ("d3.min", "js", "text/javascript")
     ]
 
-    static let messageTypes: Set<String> = ["ready", "error", "focus", "resize", "readout"]
+    static let messageTypes: Set<String> = ["ready", "error", "focus", "resize", "paused"]
 
     static func bundled(_ resource: String, _ ext: String) -> String {
         guard let url = Bundle.main.url(forResource: resource, withExtension: ext),
@@ -125,18 +123,9 @@ enum CardSandbox {
         case "resize":
             guard let h = (o["height"] as? NSNumber)?.doubleValue, h.isFinite else { return nil }
             return .resize(height: CGFloat(h))
-        default: return .readout(text: plainReadout(str("text", 400)))
+        case "paused": return .paused((o["value"] as? Bool) ?? false)
+        default: return nil
         }
-    }
-
-    /// Readouts are plain text, but pages sometimes send HTML ("n = 20<br>log n ≈ 4.3"): line breaks become " · ",
-    /// other tags go.
-    static func plainReadout(_ raw: String) -> String {
-        var t = raw.replacingOccurrences(of: "<br\\s*/?>", with: " · ", options: [.regularExpression, .caseInsensitive])
-        t = t.replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression)
-        t = t.replacingOccurrences(of: "&nbsp;", with: " ").replacingOccurrences(of: "&amp;", with: "&")
-            .replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
-        return String(t.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
     }
 }
 
@@ -145,7 +134,8 @@ enum CardMessage: Equatable {
     case error(message: String, line: Int)
     case focus(part: String)
     case resize(height: CGFloat)
-    case readout(text: String)
+    /// The page paused or resumed itself (its own play button).
+    case paused(Bool)
 }
 
 /// Serves app://lib/<file> from the bundle, and nothing else.
@@ -292,11 +282,17 @@ final class WebCardProbe: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 
 // MARK: - The page on screen
 
-/// A visualization page on screen. `reload` changes when the person taps Replay: the page starts over.
+/// A visualization page on screen. `reload` changes when the person taps Replay: the page starts over. `paused`
+/// freezes it (Card.setPaused). `onSnapshot`, if given, gets a picture of the page a moment after each time it starts.
 struct WebCardView: UIViewRepresentable {
     let html: String
     var reload: Int
+    var paused = false
+    var onSnapshot: ((UIImage) -> Void)?
     var onMessage: (CardMessage) -> Void
+
+    /// How long after the page is ready its picture is taken: long enough for the first frames to draw.
+    static let snapshotDelay: Duration = .milliseconds(700)
 
     func makeCoordinator() -> Coordinator { Coordinator(onMessage) }
 
@@ -315,9 +311,14 @@ struct WebCardView: UIViewRepresentable {
     func updateUIView(_ web: WKWebView, context: Context) {
         let c = context.coordinator
         c.onMessage = onMessage
+        c.onSnapshot = onSnapshot
         if c.loaded != reload {
             c.loaded = reload
             web.loadHTMLString(CardSandbox.document(html), baseURL: CardSandbox.baseURL)
+        }
+        if c.paused != paused {
+            c.paused = paused
+            c.applyPaused(web)
         }
     }
 
@@ -328,11 +329,36 @@ struct WebCardView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var onMessage: (CardMessage) -> Void
+        var onSnapshot: ((UIImage) -> Void)?
         var loaded = 0
+        var paused = false
         init(_ f: @escaping (CardMessage) -> Void) { onMessage = f }
+
+        /// Pictures the page once its first frames have drawn, unless it has reloaded or left the screen since.
+        private func snapshot(_ web: WKWebView) {
+            guard onSnapshot != nil else { return }
+            let load = loaded
+            Task { @MainActor [weak self, weak web] in
+                try? await Task.sleep(for: WebCardView.snapshotDelay)
+                guard let self, let web, self.loaded == load, web.window != nil,
+                      web.bounds.width > 0, web.bounds.height > 0 else { return }
+                let config = WKSnapshotConfiguration()
+                config.snapshotWidth = NSNumber(value: Double(Visualization.pageWidth))
+                guard let image = try? await web.takeSnapshot(configuration: config) else { return }
+                self.onSnapshot?(image)
+            }
+        }
+
+        func applyPaused(_ web: WKWebView) {
+            web.evaluateJavaScript("window.Card && Card.setPaused(\(paused))", completionHandler: nil)
+        }
 
         func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
             guard let m = CardSandbox.parse(message.body) else { return }
+            // A page that (re)loads starts running; a paused card pauses it again.
+            if m == .ready, paused, let web = message.webView { applyPaused(web) }
+            if m == .ready, let web = message.webView { snapshot(web) }
+            if case .paused(let p) = m { paused = p }
             onMessage(m)
         }
 

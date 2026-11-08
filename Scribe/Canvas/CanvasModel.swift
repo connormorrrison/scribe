@@ -6,14 +6,15 @@ enum AgentState: Equatable {
     case idle, listening, thinking, speaking
 }
 
-/// The agent's answer, streaming through the agent bar a word at a time. Each one is new, so the bar starts over.
+/// The agent's answer. Spoken, it streams through the agent bar a word at a time, in time with the voice. Otherwise
+/// it sits still in the reply bar under the agent control, to be read at the person's own pace.
 struct AgentReply: Identifiable, Equatable {
     let id = UUID()
     let text: String
-    /// When each word is said, in seconds from when the reply appears, if it's being spoken. Otherwise the words
-    /// come at reading pace.
+    /// When each word is said, in seconds from when the reply appears, if it's being spoken.
     var wordStarts: [TimeInterval]?
 
+    var spoken: Bool { wordStarts != nil }
     var words: [String] { Self.words(in: text) }
 
     static func words(in text: String) -> [String] {
@@ -92,6 +93,10 @@ final class CanvasModel {
     let pageMapper: PageMapper
     /// The mark the agent is drawing right now, revealed like a pen.
     private(set) var liveMark: LiveMark?
+    /// The agent's cursor, while it's out of the pill drawing on a page.
+    private(set) var agentCursor: AgentCursor?
+    /// Where the pages, the agent pill and the floating controls are on screen.
+    @ObservationIgnored let frames = CanvasFrames()
 
     var currentPageIndex: Int {
         content.pages.firstIndex { $0.id == currentPageID } ?? 0
@@ -106,8 +111,12 @@ final class CanvasModel {
     // MARK: Agent and banners
 
     var agent = AgentState.idle
-    /// The agent's answer, streaming through the agent bar.
+    /// The agent's answer: streaming through the agent bar if it's spoken, otherwise in the reply bar under it.
     var reply: AgentReply?
+    /// The agent's answer when it isn't spoken, for the reply bar. It stays until the person moves on.
+    var textReply: AgentReply? { agent == .idle && reply?.spoken == false ? reply : nil }
+    /// What's typed in the "Ask the agent…" field.
+    var draft = ""
     /// What the person has said so far while the agent listens, as it's recognised.
     var heard = ""
     /// How loud the person (while listening) or the agent's voice (while speaking) is right now, 0 to 1. The dot
@@ -129,16 +138,39 @@ final class CanvasModel {
     var showsKeyboard = false
     var enlargedCard: AgentCard?
 
+    // MARK: Lasso
+
+    /// The region lassoed on a page, while it's selected. What the person says or types to the agent meanwhile is
+    /// about it.
+    var lasso: LassoSelection?
+    /// Where the lasso tapped, offering to paste copied ink.
+    var pasteSpot: PasteSpot?
+    /// The selected ink, off the page while it's dragged.
+    private(set) var liftedInk: PKDrawing?
+    @ObservationIgnored private var beforeLift: NoteContent?
+    /// How much help the last Help gave, and where, so asking again on the same spot gives more.
+    private var helpLadder = HelpLadder()
+
     // MARK: Visualizations (hovering over the page, top right)
 
-    /// The cards are out, not tucked away. They only show while there's something to show.
-    var showsVisualizations = true
+    /// The cards are out, not tucked away. They only show while there's something to show. Saved with the note (not
+    /// an undo step), so cards tucked away stay away the next time it opens.
+    var showsVisualizations: Bool {
+        get { !content.hidesVisualizations }
+        set {
+            guard newValue == content.hidesVisualizations else { return }
+            content.hidesVisualizations = !newValue
+            scheduleSave()
+        }
+    }
     /// The agent is writing a visualization: a placeholder card waits at the end of the stack.
     var draftingVisualization = false
-    /// What each page last said in its header, the error it hit, and how many times it's been replayed. Not saved.
-    var visualizationReadouts: [UUID: String] = [:]
+    /// The error each page hit, and how many times it's been replayed. Not saved.
     var visualizationErrors: [UUID: String] = [:]
     var visualizationReloads: [UUID: Int] = [:]
+    /// Cards the person paused, and cards the agent is remaking. Not saved.
+    var pausedVisualizations: Set<UUID> = []
+    var remakingVisualizations: Set<UUID> = []
     var enlargedVisualization: Visualization?
     /// The card just closed, while its Undo shows.
     var closedVisualization: ClosedVisualization?
@@ -166,6 +198,7 @@ final class CanvasModel {
         let content = loaded.content
         if loaded.fromDisk {
             file.removeImages(notIn: Set(content.pages.flatMap { $0.images.map(\.fileName) }))
+            file.removeVisualizationImages(notIn: Set(content.visualizations.map(\.id)))
         }
         self.pdfURL = pdfURL
         self.file = file
@@ -197,11 +230,13 @@ final class CanvasModel {
             var restored = snapshot
             restored.history = current.history // History and the conversation aren't undone.
             restored.conversation = current.conversation
+            restored.hidesVisualizations = current.hidesVisualizations // Nor tucking the cards away.
             model.content = restored
             model.reloadToken += 1
             model.registerUndo(name, restoring: current)
             model.fixCurrentPage()
             if let selection = model.selectedImage, model.placedImage(selection) == nil { model.selectedImage = nil }
+            model.lasso = nil // Its stroke indices no longer match the page.
             model.changed()
         }
         undoManager.setActionName(name)
@@ -463,8 +498,8 @@ final class CanvasModel {
         guard let index = content.visualizations.firstIndex(where: { $0.id == id }) else { return }
         let visualization = content.visualizations[index]
         edit("Close Visualization", reload: false) { $0.visualizations.removeAll { $0.id == id } }
-        visualizationReadouts[id] = nil
         visualizationErrors[id] = nil
+        pausedVisualizations.remove(id)
         closedVisualization = ClosedVisualization(visualization: visualization, index: index)
         let closed = closedVisualization?.id
         Task { @MainActor [weak self] in
@@ -487,8 +522,74 @@ final class CanvasModel {
     /// Replay: the page starts over.
     func replayVisualization(_ id: UUID) {
         visualizationReloads[id, default: 0] += 1
-        visualizationReadouts[id] = nil
         visualizationErrors[id] = nil
+        pausedVisualizations.remove(id)
+    }
+
+    /// Pause: the card stands still (it can still be dragged and its controls used); tap again to carry on.
+    func togglePauseVisualization(_ id: UUID) {
+        if pausedVisualizations.remove(id) == nil { pausedVisualizations.insert(id) }
+    }
+
+    /// Remake: the agent makes the card again from its old page, clearer and simpler. The new card takes the old
+    /// one's place (Undo brings the old one back).
+    func remakeVisualization(_ id: UUID) {
+        guard let old = content.visualizations.first(where: { $0.id == id }), !remakingVisualizations.contains(id),
+              keysReady(voice: false), let claude = ClaudeClient() else { return }
+        let recent = content.conversation.suffix(6).map { ($0.speaker == .you ? "Person: " : "You: ") + $0.text }
+        remakingVisualizations.insert(id)
+        Task { [weak self] in
+            do {
+                let new = try await Self.remake(old, recent: recent, claude: claude)
+                guard let self else { return }
+                self.remakingVisualizations.remove(id)
+                withAnimation(.snappy) {
+                    self.edit("Remake Visualization", reload: false) { content in
+                        guard let i = content.visualizations.firstIndex(where: { $0.id == id }) else { return }
+                        content.visualizations[i] = new
+                        content.history.append(HistoryEntry(author: .agent, text: "Remade “\(new.title)”"))
+                    }
+                }
+                self.visualizationErrors[id] = nil
+                self.pausedVisualizations.remove(id)
+            } catch {
+                guard let self else { return }
+                self.remakingVisualizations.remove(id)
+                if !(error is CancellationError) { self.banner = .error(error.localizedDescription) }
+            }
+        }
+    }
+
+    /// Asks Claude for a clearer, simpler version of a visualization, checking the new page off screen (one fix).
+    private static func remake(_ old: Visualization, recent: [String], claude: ClaudeClient) async throws -> Visualization {
+        var messages: [JSONValue] = [["role": "user", "content": .string(VisualizationTool.remakeRequest(old, recent: recent))]]
+        var fixesLeft = 1
+        for _ in 0..<3 {
+            let turn = try await claude.sendWithTools(messages, system: VisualizationTool.remakeSystem,
+                                                      tools: [VisualizationTool.definition])
+            try Task.checkCancellation()
+            if turn.stopReason == "refusal" { throw ClaudeClient.ReplyError.declined }
+            guard let call = turn.toolUses.first(where: { $0.name == VisualizationTool.name }) else {
+                throw turn.stopReason == "max_tokens" ? ClaudeClient.ReplyError.cutOff : ClaudeClient.ReplyError.empty
+            }
+            let problem: String
+            if turn.brokenToolIDs.contains(call.id) {
+                problem = "The call was cut off before the page was complete. Send a shorter page."
+            } else {
+                switch VisualizationTool.visualization(from: call.input) {
+                case .failure(let error):
+                    problem = "It wasn't shown: \(error.message)."
+                case .success(let v):
+                    guard let found = await WebCardProbe.check(v.html), fixesLeft > 0 else { return v }
+                    fixesLeft -= 1
+                    problem = "It wasn't shown: \(found). Fix it and call \(VisualizationTool.name) again."
+                }
+            }
+            messages.append(["role": "assistant", "content": .array(turn.content.filter { $0 != .null })])
+            messages.append(["role": "user", "content": [["type": "tool_result", "tool_use_id": .string(call.id),
+                                                          "content": .string(problem), "is_error": true]]])
+        }
+        throw ClaudeClient.ReplyError.empty
     }
 
     /// What a visualization's page said.
@@ -498,8 +599,8 @@ final class CanvasModel {
             visualizationErrors[id] = nil
         case .error(let text, _):
             visualizationErrors[id] = text
-        case .readout(let text):
-            visualizationReadouts[id] = text.isEmpty ? nil : text
+        case .paused(let paused):
+            if paused { pausedVisualizations.insert(id) } else { pausedVisualizations.remove(id) }
         case .resize(let height):
             guard let i = content.visualizations.firstIndex(where: { $0.id == id }) else { return }
             let h = min(max(height, Visualization.heights.lowerBound), Visualization.heights.upperBound)
@@ -508,6 +609,17 @@ final class CanvasModel {
             scheduleSave()
         case .focus:
             break
+        }
+    }
+
+    /// A picture of a visualization's page just after it started, kept for the library's thumbnail of this note.
+    func visualizationSnapshot(_ image: UIImage, for id: UUID) {
+        guard content.visualizations.contains(where: { $0.id == id }) else { return }
+        let file = file, documentID = document.id
+        Task.detached(priority: .utility) {
+            guard let data = image.pngData() else { return }
+            file.saveVisualizationImage(data, for: id)
+            await MainActor.run { NoteThumbnails.shared.invalidate(documentID) }
         }
     }
 
@@ -549,8 +661,18 @@ final class CanvasModel {
         page(selection.pageID)?.images.first { $0.id == selection.imageID }
     }
 
-    /// A finger tap on a page: selects the topmost image under it, or clears the selection.
+    /// A finger tap on a page: selects the topmost image under it, or clears the selection. With the lasso, a tap
+    /// away from the selection puts it down, and a tap on an empty spot offers to paste copied ink.
     func tapPage(_ pageID: UUID, at point: CGPoint) {
+        if palette.tool == .lasso {
+            if let lasso, lasso.pageID == pageID, lasso.bounds.insetBy(dx: -12, dy: -12).contains(point) { return }
+            let hadSelection = lasso != nil || pasteSpot != nil
+            withAnimation(.snappy) {
+                lasso = nil
+                pasteSpot = !hadSelection && InkPasteboard.hasInk ? PasteSpot(pageID: pageID, point: point) : nil
+            }
+            return
+        }
         guard let page = page(pageID), let hit = page.images.last(where: { $0.contains(point) }) else {
             selectedImage = nil
             return
@@ -606,6 +728,149 @@ final class CanvasModel {
         selectedImage = nil
     }
 
+    // MARK: Lasso
+
+    /// A loop finished on a page: selects the region and the ink in it.
+    func finishLasso(on pageID: UUID, path: [CGPoint]) {
+        pasteSpot = nil
+        let bounds = LassoGeometry.bounds(of: path)
+        guard path.count > 2, let page = page(pageID), max(bounds.width, bounds.height) > 8 else {
+            withAnimation(.snappy) { lasso = nil }
+            return
+        }
+        withAnimation(.snappy) {
+            lasso = LassoSelection(pageID: pageID, path: path, strokes: LassoGeometry.strokes(in: path, of: page.drawing))
+        }
+    }
+
+    /// Ends the selection (picking another tool, turning the page).
+    func clearLasso() {
+        if liftedInk != nil { dropSelection(by: .zero) }
+        lasso = nil
+        pasteSpot = nil
+    }
+
+    private var selectedInk: PKDrawing? {
+        guard let lasso, lasso.hasInk, let strokes = page(lasso.pageID)?.drawing.strokes else { return nil }
+        return PKDrawing(strokes: lasso.strokes.filter { $0 < strokes.count }.map { strokes[$0] })
+    }
+
+    /// The page's strokes without the selected ones.
+    private func strokes(on pageIndex: Int, without picked: IndexSet) -> [PKStroke] {
+        content.pages[pageIndex].drawing.strokes.enumerated().filter { !picked.contains($0.offset) }.map(\.element)
+    }
+
+    func copySelection() {
+        guard let ink = selectedInk else { return }
+        InkPasteboard.copy(ink)
+    }
+
+    func cutSelection() {
+        copySelection()
+        deleteSelection(named: "Cut")
+    }
+
+    func deleteSelection(named name: String = "Delete") {
+        guard let lasso, lasso.hasInk, let i = index(of: lasso.pageID) else { return }
+        let kept = strokes(on: i, without: lasso.strokes)
+        edit(name) { $0.pages[i].drawing = PKDrawing(strokes: kept) }
+        self.lasso = nil
+        inkEdited(on: i)
+    }
+
+    /// Pastes copied ink centred on the spot, and selects it.
+    func paste(at spot: PasteSpot) {
+        pasteSpot = nil
+        guard let ink = InkPasteboard.read(), !ink.strokes.isEmpty, let i = index(of: spot.pageID) else { return }
+        let b = ink.bounds
+        let placed = ink.transformed(using: CGAffineTransform(translationX: spot.point.x - b.midX, y: spot.point.y - b.midY))
+        let existing = content.pages[i].drawing.strokes
+        edit("Paste") { $0.pages[i].drawing = PKDrawing(strokes: existing + placed.strokes) }
+        let pb = placed.bounds.insetBy(dx: -10, dy: -10)
+        lasso = LassoSelection(pageID: spot.pageID,
+                               path: [pb.origin, CGPoint(x: pb.maxX, y: pb.minY), CGPoint(x: pb.maxX, y: pb.maxY),
+                                      CGPoint(x: pb.minX, y: pb.maxY)],
+                               strokes: IndexSet(existing.count..<existing.count + placed.strokes.count))
+        inkEdited(on: i)
+    }
+
+    /// Takes the selected ink off the page while it's dragged (the overlay draws it under the finger). Not an undo
+    /// step: `dropSelection` makes the whole move one.
+    func liftSelection() {
+        guard liftedInk == nil, let lasso, let ink = selectedInk, let i = index(of: lasso.pageID) else { return }
+        beforeLift = content
+        liftedInk = ink
+        content.pages[i].drawing = PKDrawing(strokes: strokes(on: i, without: lasso.strokes))
+        reloadToken += 1
+    }
+
+    /// Puts the dragged ink down, moved by `offset` page points. One undo step.
+    func dropSelection(by offset: CGSize) {
+        guard let ink = liftedInk, let before = beforeLift, let lasso, let i = index(of: lasso.pageID) else {
+            liftedInk = nil
+            beforeLift = nil
+            return
+        }
+        liftedInk = nil
+        beforeLift = nil
+        let rest = content.pages[i].drawing.strokes
+        let moved = ink.transformed(using: CGAffineTransform(translationX: offset.width, y: offset.height)).strokes
+        content = before
+        edit("Move") { $0.pages[i].drawing = PKDrawing(strokes: rest + moved) }
+        reloadToken += 1
+        self.lasso = LassoSelection(pageID: lasso.pageID, path: lasso.translated(by: offset).path,
+                                    strokes: IndexSet(rest.count..<rest.count + moved.count))
+        inkEdited(on: i)
+    }
+
+    /// Ink changed outside the canvas: the agent's map of the page catches up.
+    private func inkEdited(on pageIndex: Int) {
+        let page = content.pages[pageIndex]
+        pageMapper.inkChanged(page) { [weak self] in self?.refreshPageMap(page.id) }
+    }
+
+    /// Help for the selection: the next rung up if Help was last asked for on the same spot.
+    func helpAction(for selection: LassoSelection) -> LassoAction {
+        .help(level: helpLadder.level(for: selection.pageID, bounds: selection.bounds))
+    }
+
+    /// Sends the lassoed region to the agent: Help writes help beside it (fuller each time on the same spot),
+    /// Visualize opens a card.
+    func ask(_ action: LassoAction) {
+        guard let lasso, keysReady(voice: false) else { return }
+        if case .help(let level) = action {
+            helpLadder.climbed(to: level, pageID: lasso.pageID, bounds: lasso.bounds)
+        }
+        let focus = LassoFocus(pageID: lasso.pageID, bounds: lasso.bounds, action: action)
+        self.lasso = nil
+        showsKeyboard = false
+        reply = nil
+        banner = nil
+        say(action.request, spoken: false)
+        run { model in try await model.reply(speak: false, focus: focus) }
+    }
+
+    /// The selection as the subject of what's said or typed next, and put down.
+    private func takeLassoFocus() -> LassoFocus? {
+        guard let lasso else { return nil }
+        withAnimation(.snappy) { self.lasso = nil }
+        return LassoFocus(pageID: lasso.pageID, bounds: lasso.bounds, action: .ask)
+    }
+
+    /// A close-up of the region, sharp enough to read handwriting: a JPEG at most about 1600 px on its long side.
+    private func closeUp(of focus: LassoFocus) -> Data? {
+        guard let page = page(focus.pageID) else { return nil }
+        let region = focus.bounds.insetBy(dx: -24, dy: -24).intersection(page.bounds)
+        guard !region.isNull, region.width > 1, region.height > 1 else { return nil }
+        let scale = min(3, max(1, 1600 / max(region.width, region.height)))
+        guard let image = renderForPageMap(page, scale: scale)?.cgImage else { return nil }
+        let px = CGFloat(image.width) / NotePageMetrics.width
+        let crop = CGRect(x: region.minX * px, y: region.minY * px, width: region.width * px, height: region.height * px)
+            .integral
+        guard let cropped = image.cropping(to: crop) else { return nil }
+        return UIImage(cgImage: cropped).jpegData(compressionQuality: 0.85)
+    }
+
     // MARK: Agent
 
     /// One line for the agent bar while the agent listens or works.
@@ -613,7 +878,7 @@ final class CanvasModel {
         switch agent {
         case .idle: ""
         case .listening: "Listening…"
-        case .thinking: liveMark == nil ? "Thinking…" : "Writing on your page…"
+        case .thinking: liveMark == nil && agentCursor == nil ? "Thinking…" : "Writing on your page…"
         case .speaking: "Speaking…"
         }
     }
@@ -638,7 +903,7 @@ final class CanvasModel {
             guard keysReady() else { return }
             banner = nil
             reply = nil
-            listen()
+            listen(focus: lasso.map { LassoFocus(pageID: $0.pageID, bounds: $0.bounds, action: .ask) })
         case .listening:
             voice.finish()
         case .thinking, .speaking:
@@ -646,15 +911,16 @@ final class CanvasModel {
         }
     }
 
-    /// Sends what was typed to the agent. It answers in text, without speaking.
+    /// Sends what was typed to the agent. It answers in text, without speaking. The field comes back once it has
+    /// answered, for a follow-up.
     func send(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, keysReady(voice: false) else { return }
-        showsKeyboard = false
         reply = nil
         banner = nil
+        let focus = takeLassoFocus()
         say(text, spoken: false)
-        run { model in try await model.reply(speak: false) }
+        run { model in try await model.reply(speak: false, focus: focus) }
     }
 
     func choose(_ option: String) {
@@ -682,7 +948,8 @@ final class CanvasModel {
 
     /// Voice to text as it's spoken (ElevenLabs realtime), then the agent's reply (Claude), then text to voice
     /// (ElevenLabs).
-    private func listen() {
+    /// `focus`: the lassoed region, when there's one; it stays selected while they talk.
+    private func listen(focus: LassoFocus? = nil) {
         run { model in
             guard await VoiceIO.microphoneAllowed() else {
                 model.banner = .error("Scribe can't hear you. Allow the microphone in Settings › Privacy & Security › Microphone.")
@@ -711,8 +978,9 @@ final class CanvasModel {
                 model.banner = .notice("The agent didn't catch that. Tap the dot and try again.")
                 return
             }
+            if focus != nil { withAnimation(.snappy) { model.lasso = nil } }
             model.say(said, spoken: true)
-            try await model.reply(speak: true)
+            try await model.reply(speak: true, focus: focus)
         }
     }
 
@@ -739,25 +1007,33 @@ final class CanvasModel {
     /// Asks Claude to answer the conversation so far, adds the answer, and speaks it if asked. On the way, Claude may
     /// open visualizations: each page is checked off screen first, and a page that fails goes back to Claude once to
     /// be fixed.
-    private func reply(speak: Bool) async throws {
+    /// With `focus`, the request is about a lassoed region: the agent works on its page and gets a close-up of it.
+    private func reply(speak: Bool, focus: LassoFocus? = nil) async throws {
         guard let claude = ClaudeClient() else { return }
         agent = .thinking
         defer { draftingVisualization = false }
         var messages = Self.messages(for: content.conversation).map(\.json)
 
         // The page on screen, mapped: the agent sees its picture and everything on it, and can draw on it.
-        let pageID = currentPageID ?? content.pages.first?.id
+        let pageID = focus?.pageID ?? currentPageID ?? content.pages.first?.id
         var drawing: DrawingTurn?
         if let pageID, let i = index(of: pageID) {
             let page = content.pages[i]
             let snapshot = await pageMapper.snapshot(of: page, render: renderForPageMap)
             try Task.checkCancellation()
             Self.attach(snapshot, page: i + 1, of: content.pages.count, to: &messages)
-            drawing = DrawingTurn(pageID: pageID, context: ActionValidator.ToolContext(snapshot: snapshot, marks: page.agentMarks),
-                                  before: (page.agentMarks, page.height))
+            if let focus {
+                Self.attach(focus.instructions(objects: focus.objects(in: snapshot)), closeUp: closeUp(of: focus),
+                            to: &messages)
+            }
+            var context = ActionValidator.ToolContext(snapshot: snapshot, marks: page.agentMarks)
+            context.chrome = chromeOnPage(pageID, height: page.height)
+            context.canGrow = page.pdfPage == nil
+            drawing = DrawingTurn(pageID: pageID, context: context, before: (page.agentMarks, page.height))
         }
         defer {
             liveMark = nil
+            returnCursor()
             if let drawing { finish(drawing) }
         }
 
@@ -767,8 +1043,9 @@ final class CanvasModel {
         for _ in 0..<6 {
             let turn = try await claude.sendWithTools(
                 messages, system: Self.agentPrompt(title: document.title, visualizations: content.visualizations.map(\.title),
-                                                   canDraw: drawing != nil),
-                tools: [VisualizationTool.definition] + (drawing == nil ? [] : AgentTools.definitions)) { [weak self] tool in
+                                                   canDraw: drawing != nil && focus?.drawsOnPage != false),
+                tools: [VisualizationTool.definition]
+                    + (drawing == nil || focus?.drawsOnPage == false ? [] : AgentTools.definitions)) { [weak self] tool in
                     guard tool == VisualizationTool.name, let self else { return }
                     withAnimation(.snappy) {
                         self.draftingVisualization = true
@@ -809,6 +1086,8 @@ final class CanvasModel {
             try Task.checkCancellation()
             messages.append(["role": "user", "content": .array(results)])
         }
+        // Done drawing: the cursor goes back into the pill before the answer.
+        returnCursor()
         let answer = said.isEmpty ? (shown > 0 ? "Here it is, in the top right." : "There, on your page.")
             : said.joined(separator: " ")
         content.conversation.append(ConversationTurn(speaker: .agent, text: answer, spoken: speak))
@@ -856,44 +1135,228 @@ final class CanvasModel {
         let before: (marks: [AgentMark], height: CGFloat)
         var drawn = 0
         var changed = false
+        /// The blank page after a document page, for what didn't fit on it.
+        var scratch: ScratchPage?
+    }
+
+    /// A blank page the agent writes on when there's no room left on a document page (which never grows, so the
+    /// document still prints and exports at its own size), like grabbing a sheet of scrap paper.
+    private struct ScratchPage {
+        var pageID: UUID
+        var context: ActionValidator.ToolContext
+        let before: (marks: [AgentMark], height: CGFloat)
+        /// A new page, not in the note until something is drawn on it.
+        var pending: NotePage?
+        /// Where it goes (or went) in the note, when it's new.
+        var index: Int
+        /// It was added this turn.
+        var added = false
+        var changed = false
     }
 
     /// Runs one drawing tool call: checks it, then draws its marks one after another, each revealed like a pen.
     private func draw(_ tool: String, input: JSONValue, turn: inout DrawingTurn) async throws -> (result: String, isError: Bool) {
-        let decision = ActionValidator.validate(tool, input: input, context: &turn.context)
+        var decision = ActionValidator.validate(tool, input: input, context: &turn.context)
         PageMapDebug.shared.logPlacement(tool, decision.notes, result: decision.result)
+        var pageID = turn.pageID
+        var onScratch = false
+        if decision.overflow {
+            // No room on their document page: onto the blank page after it.
+            var scratch = turn.scratch ?? scratchPage(after: turn.pageID)
+            decision = ActionValidator.validate(tool, input: input, context: &scratch.context)
+            PageMapDebug.shared.logPlacement(tool, decision.notes, result: decision.result)
+            guard !decision.isError else { turn.scratch = scratch; return (decision.result, true) }
+            if let page = scratch.pending {
+                content.pages.insert(page, at: min(scratch.index, content.pages.count))
+                scratch.pending = nil
+                scratch.added = true
+            }
+            turn.scratch = scratch
+            pageID = scratch.pageID
+            onScratch = true
+            decision.result += ". There was no room on their page, so it's on the blank page after it "
+                + "(page \((index(of: pageID) ?? 0) + 1)); keep anything else that doesn't fit there too"
+            // Turn to it, so they see it being written.
+            if currentPageID != pageID {
+                returnCursor()
+                withAnimation(.snappy) { currentPageID = pageID }
+                try await Task.sleep(for: .seconds(0.6))
+            }
+        }
         guard !decision.isError else { return (decision.result, true) }
-        let pageID = turn.pageID
         guard let i = index(of: pageID) else { return ("The page isn't there any more.", true) }
+        func touched() { if onScratch { turn.scratch?.changed = true } else { turn.changed = true } }
         if decision.growPage > 0 {
             withAnimation(.smooth) { content.pages[i].height += decision.growPage }
-            turn.changed = true
+            touched()
         }
         if !decision.erase.isEmpty {
             withAnimation(.easeOut(duration: 0.25)) { content.pages[i].agentMarks.removeAll { decision.erase.contains($0.id) } }
-            turn.changed = true
+            touched()
         }
         for mark in decision.marks {
+            // The cursor flies to where the mark starts (out of the pill, the first time), then draws it.
+            if let start = mark.startPoint { try await flyCursor(to: .page(start), on: pageID) }
             guard let i = index(of: pageID) else { break }
             content.pages[i].agentMarks.append(mark)
-            turn.changed = true
+            touched()
             turn.drawn += 1
             liveMark = LiveMark(pageID: pageID, markID: mark.id, start: .now, duration: mark.duration)
             try await Task.sleep(for: .seconds(mark.duration + 0.12))
+            if let end = mark.endPoint, let trip = agentCursor?.trip {
+                agentCursor = .resting(at: .page(end), on: pageID, trip: trip)
+            }
             liveMark = nil
         }
         changed()
         return (decision.result, false)
     }
 
+    /// The page after `pageID` if it's blank paper with nothing of theirs on it, or a new blank page there.
+    private func scratchPage(after pageID: UUID) -> ScratchPage {
+        let at = (index(of: pageID) ?? content.pages.count - 1) + 1
+        let existing = content.pages.indices.contains(at) ? content.pages[at] : nil
+        let reuse = existing.flatMap { $0.pdfPage == nil && $0.drawing.strokes.isEmpty && $0.images.isEmpty && $0.cards.isEmpty ? $0 : nil }
+        let page = reuse ?? NotePage(height: screenPageHeight)
+        var context = ActionValidator.ToolContext(snapshot: PageMapSnapshot(pageID: page.id, pageSize: page.bounds.size),
+                                                  marks: page.agentMarks)
+        context.placed = page.agentMarks.map(\.bounds)
+        context.scratch = true
+        context.chrome = chromeOnBlankPage(height: page.height)
+        return ScratchPage(pageID: page.id, context: context, before: (page.agentMarks, page.height),
+                           pending: reuse == nil ? page : nil, index: at)
+    }
+
+    /// Where the controls will cover a blank page when it's on screen (it fills the screen from the top).
+    private func chromeOnBlankPage(height: CGFloat) -> [CGRect] {
+        guard frames.screen.width > 0 else { return [] }
+        let k = frames.screen.width / NotePageMetrics.width
+        var out: [CGRect] = []
+        if let top = deskTop { out.append(CGRect(x: 0, y: 0, width: NotePageMetrics.width, height: top / k)) }
+        if let bottom = deskBottom {
+            out.append(CGRect(x: 0, y: bottom / k, width: NotePageMetrics.width, height: max(0, height - bottom / k)))
+        }
+        return out.filter { !$0.isEmpty }
+    }
+
+    /// Moves the agent's cursor to `spot`, out of the pill if it isn't out yet, and waits for it to get there.
+    private func flyCursor(to spot: AgentCursor.Spot, on pageID: UUID) async throws {
+        let from: AgentCursor.Spot = agentCursor.flatMap { $0.pageID == pageID && $0.to != .pill ? $0.to : nil } ?? .pill
+        let duration = AgentCursor.flight(from: from, to: spot)
+        agentCursor = AgentCursor(trip: agentCursor?.trip ?? UUID(), pageID: pageID, from: from, to: spot, start: .now,
+                                  duration: duration)
+        try await Task.sleep(for: .seconds(duration))
+    }
+
+    /// Sends the cursor back into the pill, where it disappears.
+    private func returnCursor() {
+        guard let cursor = agentCursor, cursor.to != .pill else { return }
+        let duration = AgentCursor.flight(from: cursor.to, to: .pill)
+        agentCursor = AgentCursor(trip: cursor.trip, pageID: cursor.pageID, from: cursor.to, to: .pill, start: .now,
+                                  duration: duration)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(duration + 0.05))
+            guard let self, self.agentCursor?.trip == cursor.trip, self.agentCursor?.to == .pill else { return }
+            self.agentCursor = nil
+        }
+    }
+
+    /// Where the floating controls (and the agent's cards) cover the page right now, in page points.
+    private func chromeOnPage(_ pageID: UUID, height: CGFloat) -> [CGRect] {
+        var screen = Array(frames.floating.values)
+        // The top and bottom controls, edge to edge: nothing goes between the buttons either.
+        if let top = deskTop { screen.append(CGRect(x: -10_000, y: top - 160, width: 20_000, height: 160)) }
+        if let bottom = deskBottom { screen.append(CGRect(x: -10_000, y: bottom, width: 20_000, height: 160)) }
+        let page = CGRect(x: 0, y: 0, width: NotePageMetrics.width, height: height)
+        return screen.compactMap { frames.toPage($0, on: pageID)?.intersection(page) }.filter { !$0.isNull && !$0.isEmpty }
+    }
+
     /// Ends a turn that drew: one undo step for everything it drew, and what the person draws next counts as new.
     private func finish(_ turn: DrawingTurn) {
         pageMapper.markTurn(pageID: turn.pageID)
-        guard turn.changed, let page = page(turn.pageID) else { return }
+        let scratch = turn.scratch.flatMap { $0.changed ? $0 : nil }
+        guard turn.changed || scratch != nil else { return }
         undoManager.beginUndoGrouping()
-        registerMarksUndo(pageID: turn.pageID, restoring: turn.before, current: (page.agentMarks, page.height))
+        if turn.changed, let page = page(turn.pageID) {
+            registerMarksUndo(pageID: turn.pageID, restoring: turn.before, current: (page.agentMarks, page.height))
+            log("Drew on page \((index(of: turn.pageID) ?? 0) + 1)", by: .agent)
+        }
+        if let scratch, let i = index(of: scratch.pageID) {
+            pageMapper.markTurn(pageID: scratch.pageID)
+            let page = content.pages[i]
+            if scratch.added {
+                // A page it added: undo takes the whole page away again.
+                registerPageAddedUndo(page, at: i)
+            } else {
+                registerMarksUndo(pageID: scratch.pageID, restoring: scratch.before, current: (page.agentMarks, page.height))
+            }
+            log("Drew on page \(i + 1)", by: .agent)
+        }
         undoManager.endUndoGrouping()
-        log("Drew on page \((index(of: turn.pageID) ?? 0) + 1)", by: .agent)
+        changed()
+    }
+
+    /// Undo removes `page` (added at `index`); redo puts it back as it was.
+    private func registerPageAddedUndo(_ page: NotePage, at index: Int) {
+        undoManager.registerUndo(withTarget: self) { model in
+            guard let i = model.index(of: page.id) else { return }
+            let current = model.content.pages[i]
+            model.content.pages.remove(at: i)
+            model.fixCurrentPage()
+            model.registerPageRemovedUndo(current, at: i)
+            model.changed()
+        }
+        undoManager.setActionName("Agent's Marks")
+    }
+
+    private func registerPageRemovedUndo(_ page: NotePage, at index: Int) {
+        undoManager.registerUndo(withTarget: self) { model in
+            model.content.pages.insert(page, at: min(index, model.content.pages.count))
+            model.registerPageAddedUndo(page, at: index)
+            model.changed()
+        }
+        undoManager.setActionName("Agent's Marks")
+    }
+
+    // MARK: Erasing the agent's marks
+
+    /// The page being erased, and its marks before, for one undo step per stroke of the eraser.
+    @ObservationIgnored private var erasing: (pageID: UUID, before: (marks: [AgentMark], height: CGFloat))?
+
+    func beginErasingAgentMarks(on pageID: UUID) {
+        guard let page = page(pageID) else { return }
+        erasing = (pageID, (page.agentMarks, page.height))
+    }
+
+    /// Erases what the eraser touches between `a` and `b` (page points).
+    func eraseAgentMarks(on pageID: UUID, from a: CGPoint, to b: CGPoint, radius: CGFloat, pixel: Bool) {
+        guard let i = index(of: pageID), !content.pages[i].agentMarks.isEmpty else { return }
+        let sweep = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
+            .insetBy(dx: -radius - 4, dy: -radius - 4)
+        var marks = content.pages[i].agentMarks
+        var erased = false
+        for m in marks.indices.reversed() where marks[m].bounds.intersects(sweep) {
+            let items = marks[m].items.flatMap { AgentEraser.erase($0, from: a, to: b, radius: radius, pixel: pixel) }
+            guard items != marks[m].items else { continue }
+            erased = true
+            if items.isEmpty {
+                if liveMark?.markID == marks[m].id { liveMark = nil }
+                marks.remove(at: m)
+            } else {
+                marks[m].items = items
+            }
+        }
+        if erased { content.pages[i].agentMarks = marks }
+    }
+
+    func endErasingAgentMarks() {
+        guard let erasing else { return }
+        self.erasing = nil
+        guard let page = page(erasing.pageID), page.agentMarks != erasing.before.marks else { return }
+        undoManager.beginUndoGrouping()
+        registerMarksUndo(pageID: erasing.pageID, restoring: erasing.before, current: (page.agentMarks, page.height))
+        undoManager.setActionName("Erase")
+        undoManager.endUndoGrouping()
         changed()
     }
 
@@ -926,9 +1389,43 @@ final class CanvasModel {
         messages[last]["content"] = .array(blocks)
     }
 
+    /// Adds what was lassoed (what to do with it, and a close-up) just before the person's words.
+    private static func attach(_ instructions: String, closeUp: Data?, to messages: inout [JSONValue]) {
+        guard let last = messages.indices.last, messages[last]["role"] == "user" else { return }
+        var blocks: [JSONValue]
+        switch messages[last]["content"] {
+        case .array(let existing)?: blocks = existing
+        case .string(let said)?: blocks = [["type": "text", "text": .string(said)]]
+        default: return
+        }
+        var added: [JSONValue] = [["type": "text", "text": .string(instructions)]]
+        if let closeUp {
+            added.append(["type": "image", "source": ["type": "base64", "media_type": "image/jpeg",
+                                                      "data": .string(closeUp.base64EncodedString())]])
+        }
+        blocks.insert(contentsOf: added, at: max(0, blocks.count - 1))
+        messages[last]["content"] = .array(blocks)
+    }
+
     /// Puts the reply in the agent bar away. It stays in History.
     func dismissReply() {
         reply = nil
+    }
+
+    /// Reads the reply in the reply bar aloud. It moves into the agent bar, streaming in time with the voice.
+    func readReplyAloud() {
+        guard let text = textReply?.text, keysReady() else { return }
+        reply = nil
+        run { model in try await model.speak(text) }
+    }
+
+    /// The person started writing on the page: they've moved on from the agent's text answer, and from the field
+    /// if nothing's typed in it.
+    func penDown() {
+        if textReply != nil { reply = nil }
+        if showsKeyboard, agent == .idle, draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            showsKeyboard = false
+        }
     }
 
     private func speak(_ text: String) async throws {

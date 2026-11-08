@@ -363,6 +363,90 @@ final class PageMapTests: XCTestCase {
         XCTAssertTrue(d.result.contains("moved"))
     }
 
+    func testNothingGoesUnderTheControls() {
+        let free = FreeSpace(id: "free_1", bounds: CGRect(x: 0, y: 0, width: 1100, height: 800), near: nil, visible: true)
+        var c = context(free: [free])
+        let back = CGRect(x: 0, y: 0, width: 1100, height: 90) // The top controls, edge to edge.
+        c.chrome = [back]
+        let inside = ActionValidator.validate("write", input: ["text": "(x + 1)² = x² + 2x + 1", "near": ["id": "free_1"]], context: &c)
+        XCTAssertFalse(inside.isError, inside.result)
+        XCTAssertFalse(inside.marks[0].bounds.intersects(back), inside.result)
+        let exact = ActionValidator.validate("write", input: ["text": "x = 2", "at": [60, 40]], context: &c)
+        XCTAssertFalse(exact.marks[0].bounds.intersects(back), exact.result)
+        let drawing = ActionValidator.validate("draw", input: ["size": [200, 100], "at": [20, 10],
+                                                               "shapes": [["type": "circle", "center": [50, 50], "r": 30]]], context: &c)
+        XCTAssertFalse(drawing.marks[0].bounds.intersects(back), drawing.result)
+    }
+
+    func testWritingSizeMatchesTheLandingPage() {
+        let ink = PageObject(id: "ink_1", source: .studentInk, kind: "handwriting", text: "x² = 4", bounds: CGRect(x: 200, y: 200, width: 400, height: 160))
+        var s = snapshot([ink])
+        s.studentInkHeight = 160 // Big writing doesn't make the agent's big.
+        var c = ActionValidator.ToolContext(snapshot: s, marks: [])
+        let d = ActionValidator.validate("write", input: ["text": "2 × 2 = 4", "near": ["id": "ink_1"]], context: &c)
+        guard case .text(let t)? = d.marks.first?.items.first else { return XCTFail(d.result) }
+        XCTAssertEqual(t.size, 24)
+        XCTAssertGreaterThan(d.marks[0].bounds.minX, ink.bounds.maxX, "to the right of their work")
+    }
+
+    func testHandwritingIsWrittenLetterByLetter() {
+        let line = HandwritingLine.make("2 × 2 = 4", size: 24)
+        XCTAssertEqual(line.letters.count, 5, "spaces have no ink")
+        var last = -CGFloat.infinity
+        for p in stride(from: 0.0, through: 1.0, by: 0.02) {
+            let x = line.reveal(at: p)
+            XCTAssertGreaterThanOrEqual(x, last, "the ink only ever grows")
+            last = x
+        }
+        let tip = line.tip(at: line.letters[2].start + 0.01)
+        XCTAssertLessThan(abs(tip.x - line.letters[2].minX), 24, "the pen is at the letter it's writing")
+    }
+
+    func testMarkCursorStartsAndEndsOnItsInk() {
+        let a = AgentStroke(points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0)])
+        let b = AgentStroke(points: [CGPoint(x: 0, y: 50), CGPoint(x: 100, y: 50)])
+        let mark = AgentMark(turn: UUID(), kind: "drawing", items: [.stroke(a), .stroke(b)])
+        XCTAssertEqual(mark.tip(at: 0), CGPoint(x: 0, y: 0))
+        XCTAssertEqual(mark.tip(at: 1), CGPoint(x: 100, y: 50))
+        XCTAssertEqual(mark.duration, AgentInk.stroke(a).duration + AgentInk.stroke(b).duration + AgentMark.penLift, accuracy: 0.0001)
+    }
+
+    func testADocumentPageNeverGrows() {
+        var c = context(grid: OccupancyGrid(size: CGSize(width: 1100, height: 800)).marking([CGRect(x: 0, y: 0, width: 1100, height: 800)]))
+        c.canGrow = false
+        let d = ActionValidator.validate("write", input: ["text": "no room", "near": ["box": [100, 100, 50, 50]]], context: &c)
+        XCTAssertTrue(d.overflow, d.result)
+        XCTAssertTrue(d.marks.isEmpty)
+        XCTAssertEqual(d.growPage, 0)
+        XCTAssertEqual(c.pageSize.height, 800)
+        XCTAssertTrue(ActionValidator.validate("extend_page", input: ["height": 300], context: &c).isError)
+        XCTAssertEqual(c.pageSize.height, 800)
+    }
+
+    func testAScratchPageFillsFromTheTop() {
+        var c = ActionValidator.ToolContext(snapshot: PageMapSnapshot(pageSize: CGSize(width: 1100, height: 800)), marks: [])
+        c.scratch = true
+        c.chrome = [CGRect(x: 0, y: 0, width: 1100, height: 80)]
+        let first = ActionValidator.validate("write", input: ["text": "x = 2", "near": ["id": "ink_9"]], context: &c)
+        let second = ActionValidator.validate("write", input: ["text": "x = -2", "near": ["id": "ink_9"]], context: &c)
+        XCTAssertFalse(first.isError, first.result)
+        XCTAssertGreaterThan(first.marks[0].bounds.minY, 80, "clear of the controls")
+        XCTAssertLessThan(first.marks[0].bounds.minY, 200, "at the top")
+        XCTAssertGreaterThan(second.marks[0].bounds.minY, first.marks[0].bounds.minY, "the next one goes under it")
+    }
+
+    func testTheStrokeEraserTakesWholePiecesThePixelEraserCuts() {
+        let line = AgentInk.stroke(AgentStroke(points: [CGPoint(x: 0, y: 0), CGPoint(x: 200, y: 0)]))
+        let a = CGPoint(x: 100, y: -20), b = CGPoint(x: 100, y: 20)
+        XCTAssertEqual(AgentEraser.erase(line, from: a, to: b, radius: 5, pixel: false), [])
+        let cut = AgentEraser.erase(line, from: a, to: b, radius: 5, pixel: true)
+        XCTAssertEqual(cut.count, 2, "two pieces either side of the cut")
+        let missed = AgentEraser.erase(line, from: CGPoint(x: 100, y: 30), to: CGPoint(x: 120, y: 40), radius: 5, pixel: true)
+        XCTAssertEqual(missed, [line])
+        let words = AgentInk.text(AgentText(text: "x = 2", center: CGPoint(x: 300, y: 300), size: 24))
+        XCTAssertEqual(AgentEraser.erase(words, from: CGPoint(x: 300, y: 300), to: CGPoint(x: 302, y: 300), radius: 5, pixel: true), [])
+    }
+
     func testWriteWithNoRoomAddsSpaceBelow() {
         var c = context(grid: OccupancyGrid(size: CGSize(width: 1100, height: 800)).marking([CGRect(x: 0, y: 0, width: 1100, height: 800)]))
         let d = ActionValidator.validate("write", input: ["text": "no room", "near": ["box": [100, 100, 50, 50]]], context: &c)

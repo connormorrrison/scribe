@@ -75,6 +75,53 @@ final class StorageTests: XCTestCase {
         XCTAssertNil(try XCTUnwrap(again.document(note.id)).folderID, "A deleted folder's notes move loose")
     }
 
+    /// Folders nest; notes and folders move together; a folder can't go inside itself; deleting a folder lifts what
+    /// was inside it up a level.
+    func testFoldersNestAndMoveTogether() throws {
+        let store = CanvasStore(directory: root)
+        let physics = store.createFolder(name: "Physics")
+        let waves = store.createFolder(name: "Waves", in: physics.id)
+        let sound = store.createFolder(name: "Sound")
+        let note = store.createNote(title: "Doppler", in: nil)
+        let other = store.createNote(title: "Beats", in: waves.id)
+
+        XCTAssertEqual(store.folders(in: nil).map(\.name), ["Physics", "Sound"])
+        XCTAssertEqual(store.folders(in: physics.id).map(\.id), [waves.id])
+        XCTAssertEqual(store.locationName(waves.id), "Physics › Waves")
+        XCTAssertEqual(store.allDocuments(within: physics.id).map(\.id), [other.id])
+
+        // A note and a folder move into Waves in one go.
+        XCTAssertEqual(store.move([note.id, sound.id], to: waves.id), 2)
+        XCTAssertEqual(store.itemCount(in: waves.id), 3)
+
+        // Physics can't go inside itself or anything inside it; moving to where it is already does nothing.
+        XCTAssertFalse(store.canMove(physics.id, to: physics.id))
+        XCTAssertFalse(store.canMove(physics.id, to: sound.id))
+        XCTAssertEqual(store.move([physics.id], to: sound.id), 0)
+        XCTAssertEqual(store.move([note.id], to: waves.id), 0)
+
+        let reopened = relaunchedStore()
+        XCTAssertEqual(reopened.folder(sound.id)?.parentID, waves.id)
+        XCTAssertEqual(reopened.document(note.id)?.folderID, waves.id)
+
+        // Deleting Waves lifts its notes and folders into Physics.
+        reopened.deleteFolder(try XCTUnwrap(reopened.folder(waves.id)))
+        XCTAssertEqual(reopened.folder(sound.id)?.parentID, physics.id)
+        XCTAssertEqual(reopened.document(note.id)?.folderID, physics.id)
+        XCTAssertEqual(reopened.document(other.id)?.folderID, physics.id)
+    }
+
+    /// Libraries saved before folders nested open with every folder at the top.
+    func testFlatLibraryFromBeforeNestingStillOpens() throws {
+        let id = UUID()
+        let json = """
+        {"documents": [], "folders": [{"createdAt": "2026-01-01T00:00:00Z", "id": "\(id)", "name": "Old"}]}
+        """
+        try Data(json.utf8).write(to: root.appendingPathComponent("library.json"))
+        let store = relaunchedStore()
+        XCTAssertEqual(store.folders(in: nil).map(\.id), [id])
+    }
+
     func testUnreadableLibraryIsSetAsideNotOverwritten() throws {
         let index = root.appendingPathComponent("library.json")
         try Data("not json".utf8).write(to: index)
@@ -205,6 +252,25 @@ final class StorageTests: XCTestCase {
         let directory = try XCTUnwrap(store.noteDirectory(for: document.id))
         XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent(keep).path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent(removed).path))
+    }
+
+    /// Pictures of visualizations are kept for the ones the note still has, and the rest go when it opens.
+    func testVisualizationPicturesAreKeptOnlyForVisualizationsTheNoteHas() throws {
+        let store = CanvasStore(directory: root)
+        let document = store.createNote(title: "Waves", in: nil)
+        let file = NoteFile(directory: store.noteDirectory(for: document.id))
+        let kept = Visualization(title: "Wave", html: "<p>wave</p>")
+        var content = file.load()
+        content.visualizations = [kept]
+        XCTAssertTrue(file.save(content))
+        let gone = UUID()
+        file.saveVisualizationImage(Self.pngData(), for: kept.id)
+        file.saveVisualizationImage(Self.pngData(), for: gone)
+        XCTAssertNotNil(file.visualizationImage(gone))
+
+        _ = CanvasModel(store: relaunchedStore(), document: document)
+        XCTAssertNotNil(file.visualizationImage(kept.id))
+        XCTAssertNil(file.visualizationImage(gone))
     }
 
     // MARK: Tools and settings

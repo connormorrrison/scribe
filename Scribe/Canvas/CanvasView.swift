@@ -61,6 +61,9 @@ struct CanvasView: View {
                 .transition(.opacity)
             }
 
+            // The agent's cursor: over the page, under the controls, so it comes out from under the agent pill.
+            AgentCursorLayer(model: model)
+
             VStack(spacing: 0) {
                 topEdge
                 Spacer(minLength: 0)
@@ -97,7 +100,11 @@ struct CanvasView: View {
         .animation(.snappy, value: model.banner)
         .animation(.snappy, value: model.selectedImage)
         // Turning the page puts the selected image down.
-        .onChange(of: model.currentPageID) { _, _ in model.selectedImage = nil }
+        .onChange(of: model.currentPageID) { _, _ in
+            model.selectedImage = nil
+            model.clearLasso()
+        }
+        .onChange(of: model.palette.tool) { _, _ in withAnimation(.snappy) { model.clearLasso() } }
         .animation(.snappy, value: model.showsKeyboard)
         .fullScreenCover(item: $model.enlargedCard) { card in EnlargedCard(model: model, card: card) }
         .background {
@@ -230,6 +237,7 @@ struct CanvasView: View {
 
     private func fitPages(_ size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
+        model.frames.screen = size
         model.fitPages(toHeight: (size.height * NotePageMetrics.width / size.width).rounded(.up))
     }
 
@@ -275,15 +283,26 @@ struct CanvasView: View {
                 }
                 .overlay {
                     AgentControl(model: model, openSettings: { showsSettings = true }, openHistory: { showsConversation = true })
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { model.frames.pill = $0 }
                         .steppingBack(showsMore)
                 }
                 // Where the top controls end (banners aside: they come and go over the page).
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { model.deskTop = $0 }
             }
 
+            if let reply = model.textReply {
+                AgentReplyBar(reply: reply, readAloud: { model.readReplyAloud() }, dismiss: { model.dismissReply() }) {
+                    model.dismissReply()
+                    showsConversation = true
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .steppingBack(showsMore)
+            }
+
             banners
                 .steppingBack(showsMore)
         }
+        .animation(.snappy, value: model.textReply?.id)
         .padding(.horizontal, 16)
         .padding(.top, 12)
     }

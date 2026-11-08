@@ -31,7 +31,7 @@ enum AgentTools {
 
     static let side: JSONValue = [
         "type": "string", "enum": ["right", "below", "above", "left"],
-        "description": "Which side of `near` to put it. The app finds clear space there (or on another side).",
+        "description": "Which side of `near` to put it (default right: beside their work). The app finds clear space there (or on another side).",
     ]
 
     static let point: JSONValue = ["type": "array", "items": ["type": "number"], "minItems": 2, "maxItems": 2]
@@ -40,12 +40,16 @@ enum AgentTools {
 
     static let all: [Tool] = [
         Tool(name: "write", description: """
-            Handwrite a short note, label or bit of maths on the page in your blue ink. Keep it short: a few words a \
-            line, at most 3 lines (split lines with \\n), lowercase, no full stops. Give `near` and `side` and the app \
-            puts it in clear space there, never over their writing or the printed text; `near` a free_N space writes \
-            inside that space. Use `at` [x, y] (the text's centre, in page points) only when it must go exactly there, \
-            like a label on a figure. Don't write the answer to a question they're working on unless they already have it. \
-            Example: {"text": "area = length × width", "size": "math", "near": {"id": "ink_4"}, "side": "right"}
+            Handwrite one line of maths, or a tiny label, on the page in your blue ink. Prefer maths and symbols to \
+            words: "2 × 2 = 4 ✓" beats "two times two is four". Words only as a label of at most 4 words, lowercase, \
+            no full stops, never a sentence or a question. One step per call: for working, write each step as its \
+            own call, the first `near` their work with side "right", each next one `near` your previous step (its \
+            am_N) with side "below", so the steps stack into a column. Use \\n only for a short two-line equation. \
+            The app puts it in clear space there, never over their writing, the printed text or the app's buttons. \
+            `near` a free_N space writes inside that space. Use `at` [x, y] (the text's centre, in page points) only \
+            when it must go exactly there, like a label on a figure. Don't write the answer to a question they're \
+            working on unless they already have it: write the next step and leave a "?" for them. \
+            Example: {"text": "(-2) × (-2) = ?", "size": "math", "near": {"id": "ink_4"}, "side": "right"}
             """,
              properties: [
                 "text": ["type": "string"],
@@ -164,9 +168,13 @@ enum AgentTools {
         You can see the page they're on: every request comes with a picture of it and a page map listing everything on \
         it (their writing and drawings as ink_N, printed text as txt_N, printed lines, boxes and tables as vec_N, photos, \
         your own marks as am_N), each with exact bounds in page points, plus the FREE SPACE where you can write. \
-        You can write and draw on it with write, mark, outline_region and draw. Do it when it helps more than words: \
-        check their work, point something out, label, sketch a quick diagram, show a step. Keep it light, a few marks \
-        a turn, and say a line about what you drew. \
+        You can write and draw on it with write, mark, outline_region and draw, like a tutor with a pen beside \
+        their work. On the page, show, don't tell: maths, symbols, arrows, ticks and small sketches, not sentences. \
+        Go one small step at a time, each step its own mark, stacked in a column to the right of what they're \
+        working on (right of it, then below your previous step). Two to five clear steps beat one busy block. \
+        A sketch (a number line, a graph, a square split into parts) often explains more than any words: use draw. \
+        Keep words on the page to labels of a few words. Say the explaining out loud in your reply instead, \
+        one line about what you drew. \
         Always target things by their id from the page map. Never guess coordinates from the picture: every object has \
         exact bounds. To write in empty space, use near {"id": "free_N"}. Use outline_region on a ·traceable object to \
         trace its real lines; figures like maps are split into parts you can trace one by one. Each result says where your mark went; if it says something was moved, that's fine.

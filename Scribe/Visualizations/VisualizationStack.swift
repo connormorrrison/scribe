@@ -3,7 +3,7 @@ import SwiftUI
 /// The agent's visualizations, hovering over the page in the top right, just under the top buttons: newest at the
 /// bottom, scrolling once there are more than fit. The page underneath is exactly as it is without them.
 ///
-/// Drag a card's title bar or caption up and down to scroll the cards, or flick it right to tuck them away; a tab
+/// Drag a card's title bar up and down to scroll the cards, or flick it right to tuck them away; a tab
 /// stays on the screen's edge, and tapping it or flicking it left brings them back. A new visualization always brings
 /// them back.
 struct VisualizationStack: View {
@@ -37,10 +37,12 @@ struct VisualizationStack: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             cards
+                .floatingOverPage("visualizations", in: model)
                 .offset(x: shown ? max(0, drag) : width + 24)
                 .allowsHitTesting(shown)
             if !shown {
-                tab.transition(.move(edge: .trailing).combined(with: .opacity))
+                tab.floatingOverPage("visualizationsTab", in: model)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
         .frame(width: screen.width, height: screen.height, alignment: .topTrailing)
@@ -54,7 +56,7 @@ struct VisualizationStack: View {
 
     private var cards: some View {
         // Not lazy, and not a system scroll view (around web views it paints over the page): every card keeps running,
-        // and the stack scrolls by its title bars and captions (`grab`).
+        // and the stack scrolls by its title bars (`grab`).
         VStack(spacing: 16) {
             ForEach(Array(model.content.visualizations.enumerated()), id: \.element.id) { index, visualization in
                 if closed?.index == index { closedRow }
@@ -142,7 +144,7 @@ struct VisualizationStack: View {
         }
     }
 
-    /// A drag on a card's title bar or caption. Up and down scrolls the cards (with a little momentum); a drag to
+    /// A drag on a card's title bar. Up and down scrolls the cards (with a little momentum); a drag to
     /// the right pulls them toward the edge, and they go if it's flicked or pulled far enough.
     private var grab: some Gesture {
         DragGesture(minimumDistance: 8, coordinateSpace: .global)
@@ -206,23 +208,31 @@ struct VisualizationStack: View {
     }
 }
 
-/// One visualization: a dark card with its title (and the page's live readout), Replay, Enlarge and Close, the page
-/// itself, and its caption. All of it on the card, so it reads the same over any page.
+/// One visualization: a dark card with its title, Pause, More (Remake, Replay, Enlarge) and Close, then the page
+/// itself (which draws its own live readout under the picture). All of it on the card, so it reads the same over any
+/// page.
 struct VisualizationCard<Grab: Gesture>: View {
     let model: CanvasModel
     let visualization: Visualization
-    /// Scrolls the cards, or flicks them away, from the title bar or the caption.
+    /// Scrolls the cards, or flicks them away, from the title bar.
     let grab: Grab
+
+    private var paused: Bool { model.pausedVisualizations.contains(visualization.id) }
+    private var remaking: Bool { model.remakingVisualizations.contains(visualization.id) }
 
     var body: some View {
         VStack(spacing: 0) {
-                VisualizationHeader(title: visualization.title,
-                                    readout: model.visualizationReadouts[visualization.id]) {
-                    StageButton(title: "Replay", symbol: "arrow.counterclockwise") {
-                        model.replayVisualization(visualization.id)
-                    }
-                    StageButton(title: "Enlarge", symbol: "arrow.up.left.and.arrow.down.right") {
-                        model.enlargedVisualization = visualization
+                VisualizationHeader(title: visualization.title) {
+                    PauseButton(paused: paused) { model.togglePauseVisualization(visualization.id) }
+                    StageMenu(title: "More", symbol: "ellipsis") {
+                        Button("Remake", systemImage: "sparkles") { model.remakeVisualization(visualization.id) }
+                            .disabled(remaking)
+                        Button("Replay", systemImage: "arrow.counterclockwise") {
+                            model.replayVisualization(visualization.id)
+                        }
+                        Button("Enlarge", systemImage: "arrow.up.left.and.arrow.down.right") {
+                            model.enlargedVisualization = visualization
+                        }
                     }
                     StageButton(title: "Close", symbol: "xmark") {
                         withAnimation(.snappy) { model.closeVisualization(visualization.id) }
@@ -230,12 +240,16 @@ struct VisualizationCard<Grab: Gesture>: View {
                 }
                 .contentShape(Rectangle())
                 .gesture(grab)
-                WebCardView(html: visualization.html, reload: model.visualizationReloads[visualization.id] ?? 0) { message in
+                WebCardView(html: visualization.html, reload: model.visualizationReloads[visualization.id] ?? 0,
+                            paused: paused,
+                            onSnapshot: { model.visualizationSnapshot($0, for: visualization.id) }) { message in
                     model.visualizationMessage(message, from: visualization.id)
                 }
                 .frame(height: visualization.height)
                 .overlay(alignment: .bottom) { StageError(message: model.visualizationErrors[visualization.id]) }
-                footer
+                .overlay { if remaking { RemakingCover().transition(.opacity) } }
+                .animation(.snappy, value: remaking)
+                .padding(.bottom, 6)
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         // The shadow belongs to a plain shape behind the card: shadowing the card itself (it holds a web view) makes
@@ -248,54 +262,85 @@ struct VisualizationCard<Grab: Gesture>: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(visualization.title)
     }
-
-    /// The caption: what to try. Without one, just a little room under the page.
-    @ViewBuilder private var footer: some View {
-        if let caption = visualization.caption {
-            Text(caption)
-                .font(.system(size: 13, weight: .regular, design: .rounded))
-                .foregroundStyle(.white.opacity(0.6))
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 14)
-                .contentShape(Rectangle())
-                .gesture(grab)
-        } else {
-            Color.clear.frame(height: 10)
-        }
-    }
 }
 
-/// The card's title row on the dark stage: the title, the page's readout under it, and buttons at the end.
+/// The card's title row on the dark stage: the title, with buttons at the end.
 struct VisualizationHeader<Buttons: View>: View {
     let title: String
-    let readout: String?
     @ViewBuilder var buttons: Buttons
 
     var body: some View {
         HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                if let readout {
-                    Text(readout)
-                        .font(.system(size: 12, weight: .regular, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.white.opacity(0.65))
-                        .lineLimit(1)
-                        .contentTransition(.numericText())
-                }
-            }
-            .padding(.leading, 16)
+            Text(title)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .padding(.leading, 16)
             Spacer(minLength: 8)
             buttons
         }
         .padding(.trailing, 4)
-        .frame(height: 52)
+        .frame(height: 48)
+    }
+}
+
+/// Pause and play for a card's page.
+struct PauseButton: View {
+    let paused: Bool
+    let action: () -> Void
+
+    var body: some View {
+        StageButton(title: paused ? "Play" : "Pause", symbol: paused ? "play.fill" : "pause.fill", action: action)
+            .contentTransition(.symbolEffect(.replace))
+    }
+}
+
+/// A menu on the dark stage that looks like a `StageButton`.
+struct StageMenu<Items: View>: View {
+    let title: String
+    let symbol: String
+    @ViewBuilder var items: Items
+
+    var body: some View {
+        Menu {
+            items
+        } label: {
+            StageSymbol(symbol: symbol)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
+}
+
+/// Over a card while the agent remakes it: the old page dimmed, with a spinner.
+struct RemakingCover: View {
+    var body: some View {
+        ZStack {
+            Landing.card.opacity(0.82)
+            VStack(spacing: 10) {
+                ProgressView().tint(.white)
+                Text("Remaking it simpler…")
+                    .font(.system(size: 14, weight: .regular, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.72))
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The look of a stage button: a 30 pt circle, with a 44 pt target.
+struct StageSymbol: View {
+    let symbol: String
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 30, height: 30)
+            .background(.white.opacity(0.12), in: Circle())
+            .frame(width: 40, height: 44)
+            .contentShape(Rectangle())
     }
 }
 
@@ -307,13 +352,7 @@ struct StageButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 30, height: 30)
-                .background(.white.opacity(0.12), in: Circle())
-                .frame(width: 40, height: 44)
-                .contentShape(Rectangle())
+            StageSymbol(symbol: symbol)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
@@ -361,20 +400,22 @@ struct EnlargedVisualization: View {
     let visualization: Visualization
     @Environment(\.dismiss) private var dismiss
     @State private var reload = 0
+    @State private var paused = false
 
     var body: some View {
         GeometryReader { geo in
             let width = min(geo.size.width - 64, 1000)
-            let height = min(geo.size.height - 64 - 52, width * 0.75)
+            let height = min(geo.size.height - 64 - 48, width * 0.75)
             VStack(spacing: 0) {
-                VisualizationHeader(title: visualization.title,
-                                    readout: model.visualizationReadouts[visualization.id]) {
-                    StageButton(title: "Replay", symbol: "arrow.counterclockwise") { reload += 1 }
+                VisualizationHeader(title: visualization.title) {
+                    PauseButton(paused: paused) { paused.toggle() }
+                    StageButton(title: "Replay", symbol: "arrow.counterclockwise") { reload += 1; paused = false }
                     StageButton(title: "Done", symbol: "arrow.down.right.and.arrow.up.left") { dismiss() }
                 }
-                WebCardView(html: visualization.html, reload: reload) { message in
-                    // The card in the stack keeps its own height.
+                WebCardView(html: visualization.html, reload: reload, paused: paused) { message in
+                    // The card in the stack keeps its own height, and its own pause.
                     if case .resize = message { return }
+                    if case .paused(let p) = message { paused = p; return }
                     model.visualizationMessage(message, from: visualization.id)
                 }
                 .frame(height: height)

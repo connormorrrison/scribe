@@ -15,8 +15,8 @@
 		1605B6C2BFC1866FCE2136A9 /* PrintedText.swift in Sources */ = {isa = PBXBuildFile; fileRef = F151F300FEAF613C545EAB0C /* PrintedText.swift */; };
 		180C2BB33D56C8B484A90D1B /* ClaudeTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 605740708C17A151DD2CA128 /* ClaudeTools.swift */; };
 		1A8568C11510562E79B143C3 /* WorksheetMapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 957C86732EE6AE836529BF11 /* WorksheetMapTests.swift */; };
-		1E6F5C11507D67DF0C0B7444 /* STIXTwoText-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FF2A62A83EEA4C78607593AD /* STIXTwoText-Italic.ttf */; };
 		1FBC3C7078AEA69EF13353CD /* LibraryComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9218C5FA0A854F8BA6DDF814 /* LibraryComponents.swift */; };
+		1FEA76FBD1BCE182535219EB /* LassoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2D42A7A2052DC8A5F681BA /* LassoTests.swift */; };
 		24E40CA6BA4B010023A41DA9 /* CanvasStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 342F06A17C09B5265B73A29A /* CanvasStore.swift */; };
 		2BE10B51CDEEDB29161327F4 /* AgentMarks.swift in Sources */ = {isa = PBXBuildFile; fileRef = D686A07E63EECBBFCE17A4F1 /* AgentMarks.swift */; };
 		2E0FA91583B2F773CBA9A34F /* three.min.js in Resources */ = {isa = PBXBuildFile; fileRef = 7B39758F5C68440C68C3EBC4 /* three.min.js */; };
@@ -28,13 +28,14 @@
 		3F361F29058A0480D0BE6709 /* Caveat.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 4ED2E734490566000F0A1854 /* Caveat.ttf */; };
 		4214D285D681BBE5D2E0F794 /* DrawBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4330C89097BADA8BE9ED2A3 /* DrawBuilder.swift */; };
 		4328011C55575F587897CCF1 /* ActionValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE9152BE801B73965C240E0C /* ActionValidator.swift */; };
+		47FC872D44312C7A76AFC8CC /* Lasso.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DF873924EBE28656DEAC07B /* Lasso.swift */; };
 		493C16A95A432A8CE9B786DF /* FigureRegionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76167C50A53417EBADFDC076 /* FigureRegionsTests.swift */; };
-		52FCCC00F01B9407405FFC55 /* DocumentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E7D00974B33FE33E399C2F9 /* DocumentsView.swift */; };
 		564A3D9845295142F79DC86F /* PageMapText.swift in Sources */ = {isa = PBXBuildFile; fileRef = C38C6ADF7BB7C275ED381183 /* PageMapText.swift */; };
 		5D4C67CE8E4DA61D198F3613 /* LibraryScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A3180D2749FBC4F034A65EB /* LibraryScreens.swift */; };
 		5E34625DFB6F03C95303E606 /* PageModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 364715910F19E9C994359071 /* PageModel.swift */; };
 		5ED894F2C4C5C05EE2B436F7 /* ElevenLabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D08B8F587D519154008C052 /* ElevenLabs.swift */; };
 		6543F8C637F55461D586312E /* CardSandbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = D772CDFF77CBA5D1CDEB22F7 /* CardSandbox.swift */; };
+		66698C654C7685F792D6AC3E /* AgentCursor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C28C858659A5E1B9A6AAED78 /* AgentCursor.swift */; };
 		725DFD56586968C9007B1EBF /* Claude.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4DE0CB64DEF1532373596B3 /* Claude.swift */; };
 		793C648808C58DD2AFCD97D5 /* VoiceIO.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BAE17D04371D165FEA772AA /* VoiceIO.swift */; };
 		7BA2C69EBDCAEE717CE0437F /* PageMapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BC1B0BA225CB4B010302BB5 /* PageMapTests.swift */; };
@@ -50,15 +51,14 @@
 		AA1C590EA95505626C7F0D4D /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB421B9D94FB197E2C91FE44 /* AppSettings.swift */; };
 		AA1E71F5573E9ADF6C50BC05 /* ToolPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D24505520B2FD84A084D195 /* ToolPalette.swift */; };
 		AEED381763459F5F54EC8408 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E66F58B9DD78240A1F23C206 /* ContentView.swift */; };
+		B22D8C4499973B872AD68906 /* FolderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8998560F57B77F69F211751B /* FolderView.swift */; };
 		B487D464BEBCB4FC9A806016 /* VisualizationStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EB1EC0903AEE4E9215051DE /* VisualizationStack.swift */; };
 		BB2F2D12AED42D64BD5CE10E /* PDFPages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E779F3184B19AEAA00EAA17 /* PDFPages.swift */; };
 		C4457AFB46EBCC8F7A30D469 /* ScribeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 572ACD849DC28AE0C35FCA9B /* ScribeApp.swift */; };
 		C4CF9AFD09B05EFACFA9892B /* StorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F94F6A37B544CB63AE47FE /* StorageTests.swift */; };
 		C63F0DCDFBB6E8F822046B9D /* CanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 243DBA695ADE6FE401D00CCE /* CanvasView.swift */; };
-		C8F385AED868FA8AABFA9F83 /* STIXTwoText.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 35345AAA4E66AF9E54270DFA /* STIXTwoText.ttf */; };
 		D70A5D3E45A53257F3B92E36 /* CanvasModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8900E725F8A514F963B95607 /* CanvasModel.swift */; };
 		DA4E53C4E51D11E937152799 /* PageMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80083ED8BD55530A8D4AA635 /* PageMapper.swift */; };
-		DA61D5F47FC4D97BBC239832 /* STIXTwoText-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = D8E9704FFA1FBFFBF3BFDFF3 /* STIXTwoText-OFL.txt */; };
 		E83B09ED7769B0415F7A9EEF /* PageMapDebug.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E02757CF6D844253B177DFB /* PageMapDebug.swift */; };
 		F0D87FB1F55B6D9F08E1FB8F /* Visualization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3054C9BD56F97C65CAC587C6 /* Visualization.swift */; };
 		F3BA2924E6C21615251B3A88 /* ClaudeReplyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40B2379145E73EF274E20C8D /* ClaudeReplyTests.swift */; };
@@ -90,8 +90,8 @@
 		33A7709C347B616F5883BA6F /* card-kit.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "card-kit.js"; sourceTree = "<group>"; };
 		33D57331068EBC8DCB05B61F /* PageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageView.swift; sourceTree = "<group>"; };
 		342F06A17C09B5265B73A29A /* CanvasStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasStore.swift; sourceTree = "<group>"; };
-		35345AAA4E66AF9E54270DFA /* STIXTwoText.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = STIXTwoText.ttf; sourceTree = "<group>"; };
 		364715910F19E9C994359071 /* PageModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageModel.swift; sourceTree = "<group>"; };
+		3DF873924EBE28656DEAC07B /* Lasso.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lasso.swift; sourceTree = "<group>"; };
 		3EB1EC0903AEE4E9215051DE /* VisualizationStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualizationStack.swift; sourceTree = "<group>"; };
 		40B2379145E73EF274E20C8D /* ClaudeReplyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeReplyTests.swift; sourceTree = "<group>"; };
 		44E7505F3253923A53422794 /* Occupancy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Occupancy.swift; sourceTree = "<group>"; };
@@ -114,7 +114,7 @@
 		7E779F3184B19AEAA00EAA17 /* PDFPages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFPages.swift; sourceTree = "<group>"; };
 		80083ED8BD55530A8D4AA635 /* PageMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageMapper.swift; sourceTree = "<group>"; };
 		8900E725F8A514F963B95607 /* CanvasModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasModel.swift; sourceTree = "<group>"; };
-		8E7D00974B33FE33E399C2F9 /* DocumentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentsView.swift; sourceTree = "<group>"; };
+		8998560F57B77F69F211751B /* FolderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderView.swift; sourceTree = "<group>"; };
 		9218C5FA0A854F8BA6DDF814 /* LibraryComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryComponents.swift; sourceTree = "<group>"; };
 		957C86732EE6AE836529BF11 /* WorksheetMapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorksheetMapTests.swift; sourceTree = "<group>"; };
 		9C918495C5E0EF8EDCC9CAFE /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
@@ -126,19 +126,19 @@
 		B9C170F0EA4BE2F97F196EC5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		BB421B9D94FB197E2C91FE44 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		BDB34195BC271AA08CD75181 /* Caveat-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Caveat-OFL.txt"; sourceTree = "<group>"; };
+		BF2D42A7A2052DC8A5F681BA /* LassoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LassoTests.swift; sourceTree = "<group>"; };
+		C28C858659A5E1B9A6AAED78 /* AgentCursor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCursor.swift; sourceTree = "<group>"; };
 		C38C6ADF7BB7C275ED381183 /* PageMapText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageMapText.swift; sourceTree = "<group>"; };
 		C5F94F6A37B544CB63AE47FE /* StorageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageTests.swift; sourceTree = "<group>"; };
 		C746A923AB93043D4A2EF9ED /* LandingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingView.swift; sourceTree = "<group>"; };
 		D686A07E63EECBBFCE17A4F1 /* AgentMarks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentMarks.swift; sourceTree = "<group>"; };
 		D772CDFF77CBA5D1CDEB22F7 /* CardSandbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardSandbox.swift; sourceTree = "<group>"; };
-		D8E9704FFA1FBFFBF3BFDFF3 /* STIXTwoText-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "STIXTwoText-OFL.txt"; sourceTree = "<group>"; };
 		DB71ECE7EFF4B8A23EC486BC /* FigureRegions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FigureRegions.swift; sourceTree = "<group>"; };
 		DCB4A46BA4A79B78AD1DEED9 /* VisualizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualizationTests.swift; sourceTree = "<group>"; };
 		E4DE0CB64DEF1532373596B3 /* Claude.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Claude.swift; sourceTree = "<group>"; };
 		E66F58B9DD78240A1F23C206 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		F151F300FEAF613C545EAB0C /* PrintedText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintedText.swift; sourceTree = "<group>"; };
 		F4330C89097BADA8BE9ED2A3 /* DrawBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawBuilder.swift; sourceTree = "<group>"; };
-		FF2A62A83EEA4C78607593AD /* STIXTwoText-Italic.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "STIXTwoText-Italic.ttf"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -167,6 +167,7 @@
 				8900E725F8A514F963B95607 /* CanvasModel.swift */,
 				3024B3AD6BB82B96EB939752 /* CanvasSheets.swift */,
 				243DBA695ADE6FE401D00CCE /* CanvasView.swift */,
+				3DF873924EBE28656DEAC07B /* Lasso.swift */,
 				2F5CBE590B63076DCEB6808B /* NoteContent.swift */,
 				ADC7740DAAC0D91EBC9F066D /* PageRenderer.swift */,
 				33D57331068EBC8DCB05B61F /* PageView.swift */,
@@ -209,6 +210,7 @@
 			isa = PBXGroup;
 			children = (
 				AE9152BE801B73965C240E0C /* ActionValidator.swift */,
+				C28C858659A5E1B9A6AAED78 /* AgentCursor.swift */,
 				D686A07E63EECBBFCE17A4F1 /* AgentMarks.swift */,
 				51DE719C0EA0A1DB6079F5AA /* AgentTools.swift */,
 				F4330C89097BADA8BE9ED2A3 /* DrawBuilder.swift */,
@@ -221,6 +223,7 @@
 			children = (
 				40B2379145E73EF274E20C8D /* ClaudeReplyTests.swift */,
 				76167C50A53417EBADFDC076 /* FigureRegionsTests.swift */,
+				BF2D42A7A2052DC8A5F681BA /* LassoTests.swift */,
 				6BC1B0BA225CB4B010302BB5 /* PageMapTests.swift */,
 				6A02A59EDCEF98DF2BB89367 /* SpeechTimingTests.swift */,
 				C5F94F6A37B544CB63AE47FE /* StorageTests.swift */,
@@ -274,7 +277,7 @@
 			isa = PBXGroup;
 			children = (
 				342F06A17C09B5265B73A29A /* CanvasStore.swift */,
-				8E7D00974B33FE33E399C2F9 /* DocumentsView.swift */,
+				8998560F57B77F69F211751B /* FolderView.swift */,
 				9218C5FA0A854F8BA6DDF814 /* LibraryComponents.swift */,
 				5A3180D2749FBC4F034A65EB /* LibraryScreens.swift */,
 				9C918495C5E0EF8EDCC9CAFE /* LibraryView.swift */,
@@ -288,9 +291,6 @@
 				33A7709C347B616F5883BA6F /* card-kit.js */,
 				72D4DA2A136290D59AA9E989 /* card.css */,
 				1D2A3B09CE46F42648E9BC48 /* d3.min.js */,
-				FF2A62A83EEA4C78607593AD /* STIXTwoText-Italic.ttf */,
-				D8E9704FFA1FBFFBF3BFDFF3 /* STIXTwoText-OFL.txt */,
-				35345AAA4E66AF9E54270DFA /* STIXTwoText.ttf */,
 				7B39758F5C68440C68C3EBC4 /* three.min.js */,
 			);
 			path = Web;
@@ -400,9 +400,6 @@
 				F6EB18EEAA041A038DFC5752 /* Assets.xcassets in Resources */,
 				0CA0129A11C9832DE88247C4 /* Caveat-OFL.txt in Resources */,
 				3F361F29058A0480D0BE6709 /* Caveat.ttf in Resources */,
-				1E6F5C11507D67DF0C0B7444 /* STIXTwoText-Italic.ttf in Resources */,
-				DA61D5F47FC4D97BBC239832 /* STIXTwoText-OFL.txt in Resources */,
-				C8F385AED868FA8AABFA9F83 /* STIXTwoText.ttf in Resources */,
 				3CFAFE19950F5ADE2BA9C17D /* card-kit.js in Resources */,
 				146CFE689425781F7BC6DFD0 /* card.css in Resources */,
 				15C1C5B667E484F61D6EEC8C /* d3.min.js in Resources */,
@@ -441,6 +438,7 @@
 			files = (
 				F3BA2924E6C21615251B3A88 /* ClaudeReplyTests.swift in Sources */,
 				493C16A95A432A8CE9B786DF /* FigureRegionsTests.swift in Sources */,
+				1FEA76FBD1BCE182535219EB /* LassoTests.swift in Sources */,
 				7BA2C69EBDCAEE717CE0437F /* PageMapTests.swift in Sources */,
 				36B1314359F7EF0935822D15 /* SpeechTimingTests.swift in Sources */,
 				C4CF9AFD09B05EFACFA9892B /* StorageTests.swift in Sources */,
@@ -454,6 +452,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4328011C55575F587897CCF1 /* ActionValidator.swift in Sources */,
+				66698C654C7685F792D6AC3E /* AgentCursor.swift in Sources */,
 				2BE10B51CDEEDB29161327F4 /* AgentMarks.swift in Sources */,
 				3620D56B4EE1B95ABF9979A0 /* AgentTools.swift in Sources */,
 				AA1C590EA95505626C7F0D4D /* AppSettings.swift in Sources */,
@@ -466,13 +465,14 @@
 				725DFD56586968C9007B1EBF /* Claude.swift in Sources */,
 				180C2BB33D56C8B484A90D1B /* ClaudeTools.swift in Sources */,
 				AEED381763459F5F54EC8408 /* ContentView.swift in Sources */,
-				52FCCC00F01B9407405FFC55 /* DocumentsView.swift in Sources */,
 				4214D285D681BBE5D2E0F794 /* DrawBuilder.swift in Sources */,
 				5ED894F2C4C5C05EE2B436F7 /* ElevenLabs.swift in Sources */,
 				31433E25B27162D5A7D27AF5 /* FigureRegions.swift in Sources */,
+				B22D8C4499973B872AD68906 /* FolderView.swift in Sources */,
 				9199718A9F8D2DC1794E721C /* InkObjects.swift in Sources */,
 				9DD181BD50EBFDFE0C1C8FB4 /* LandingSupport.swift in Sources */,
 				3B685F1084467D6DDEEF120E /* LandingView.swift in Sources */,
+				47FC872D44312C7A76AFC8CC /* Lasso.swift in Sources */,
 				1FBC3C7078AEA69EF13353CD /* LibraryComponents.swift in Sources */,
 				5D4C67CE8E4DA61D198F3613 /* LibraryScreens.swift in Sources */,
 				7DAD1CD8DF36FF564CA402A4 /* LibraryView.swift in Sources */,

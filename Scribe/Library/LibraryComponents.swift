@@ -17,8 +17,28 @@ struct LibrarySelection {
     private(set) var notes: Set<UUID> = []
 
     var count: Int { folders.count + notes.count }
+    var ids: [UUID] { Array(folders) + Array(notes) }
+
+    func contains(_ id: UUID) -> Bool { folders.contains(id) || notes.contains(id) }
 
     mutating func begin() { isActive = true }
+
+    /// Selects everything given, or clears the selection if it's all selected already.
+    mutating func toggleAll(folders allFolders: [UUID], notes allNotes: [UUID]) {
+        if folders.count == allFolders.count && notes.count == allNotes.count {
+            folders = []
+            notes = []
+        } else {
+            folders = Set(allFolders)
+            notes = Set(allNotes)
+        }
+    }
+
+    /// Forgets anything that has left the screen (moved by a drag, say).
+    mutating func keep(folders shown: Set<UUID>, notes shownNotes: Set<UUID>) {
+        folders.formIntersection(shown)
+        notes.formIntersection(shownNotes)
+    }
 
     mutating func end() {
         isActive = false
@@ -35,27 +55,62 @@ struct LibrarySelection {
     }
 }
 
-/// A question the library asks: a name to type, or PDFs to pick.
+/// A question the library asks: a name to type, PDFs to pick, or where to move things.
 enum LibraryPrompt: Identifiable, Equatable {
     case newNote(folderID: UUID?)
-    case newFolder
+    /// A new folder inside `parentID`, with `items` (notes and folders) moved into it once it's named.
+    case newFolder(parentID: UUID?, items: [UUID] = [])
     case importPDF(folderID: UUID?)
     case renameNote(UUID)
     case renameFolder(UUID)
+    /// Pick a folder to move these notes and folders into.
+    case move([UUID])
 
     var id: String {
         switch self {
         case .newNote(let folder): "newNote-\(folder?.uuidString ?? "")"
-        case .newFolder: "newFolder"
+        case .newFolder(let parent, let items): "newFolder-\(parent?.uuidString ?? "")-\(items.count)"
         case .importPDF(let folder): "importPDF-\(folder?.uuidString ?? "")"
         case .renameNote(let id): "renameNote-\(id)"
         case .renameFolder(let id): "renameFolder-\(id)"
+        case .move(let ids): "move-\(ids.map(\.uuidString).joined())"
         }
     }
 
     var asksForName: Bool {
-        if case .importPDF = self { return false }
-        return true
+        switch self {
+        case .importPDF, .move: false
+        default: true
+        }
+    }
+
+    var isImport: Bool {
+        if case .importPDF = self { return true }
+        return false
+    }
+}
+
+/// What a dragged tile or sidebar row carries: the IDs of the notes and folders being dragged, so a whole selection
+/// can be dropped onto a folder at once.
+enum LibraryDrag {
+    static func payload(_ ids: [UUID]) -> String { ids.map(\.uuidString).joined(separator: ",") }
+
+    static func ids(_ payloads: [String]) -> [UUID] {
+        payloads.flatMap { $0.split(separator: ",") }.compactMap { UUID(uuidString: String($0)) }
+    }
+}
+
+extension View {
+    /// Lets notes and folders be dropped onto this view to move them into `folderID` (nil: the top of Documents).
+    /// `targeted` follows whether a drag is hovering over it.
+    func libraryDropTarget(_ folderID: UUID?, store: CanvasStore, targeted: Binding<Bool>? = nil,
+                           onMove: @escaping () -> Void = {}) -> some View {
+        dropDestination(for: String.self) { payloads, _ in
+            let ids = LibraryDrag.ids(payloads)
+            let moved = withAnimation(.snappy) { store.move(ids, to: folderID) }
+            if moved > 0 { onMove() }
+            return moved > 0
+        } isTargeted: { targeted?.wrappedValue = $0 }
     }
 }
 
@@ -63,8 +118,12 @@ enum LibraryPrompt: Identifiable, Equatable {
 
 enum LibraryMetrics {
     static let tileWidth: CGFloat = 200
-    /// Landscape US Letter proportions.
-    static let thumbnailHeight: CGFloat = tileWidth * 8.5 / 11
+    /// The landscape screen a note opens on, in points: the canvas fits the page's width to it, so a tile of the
+    /// same shape shows exactly what the canvas does, with nothing cut off at the sides.
+    static let screenSize = CGSize(width: 1180, height: 820)
+    /// Width over height of a note on the canvas, and so of every tile and folder preview.
+    static let pageAspect: CGFloat = screenSize.width / screenSize.height
+    static let thumbnailHeight: CGFloat = tileWidth / pageAspect
     static let spacing: CGFloat = 28
     /// Space at the left and right of every library screen.
     static let margin: CGFloat = 56
@@ -139,14 +198,26 @@ struct DocumentTile: View {
 }
 
 /// A folder, like a Home Screen folder but landscape: a tinted tile holding small previews of its first four
-/// notes. Every folder is the same neutral gray.
+/// notes (including notes in folders inside it). Every folder is the same neutral gray, outlined in the accent
+/// colour while something is dragged over it.
 struct FolderTile: View {
     let folder: CanvasFolder
     let documents: [CanvasDocument]
+    let itemCount: Int
+    var dropTargeted = false
 
     var body: some View {
-        LibraryTile(title: folder.name, caption: documents.count == 1 ? "1 item" : "\(documents.count) items") {
+        LibraryTile(title: folder.name, caption: itemCount == 1 ? "1 item" : "\(itemCount) items") {
             FolderArtwork(documents: documents)
+                .overlay {
+                    if dropTargeted {
+                        let shape = RoundedRectangle(cornerRadius: LibraryMetrics.cornerRadius, style: .continuous)
+                        shape.fill(Color.accentColor.opacity(0.12))
+                            .overlay(shape.strokeBorder(Color.accentColor, lineWidth: 3))
+                    }
+                }
+                .scaleEffect(dropTargeted ? 1.04 : 1)
+                .animation(.snappy(duration: 0.2), value: dropTargeted)
         }
     }
 }
@@ -166,10 +237,12 @@ struct FolderArtwork: View {
                         let index = row * 2 + column
                         if index < previews.count {
                             DocumentArtwork(document: previews[index])
+                                .aspectRatio(LibraryMetrics.pageAspect, contentMode: .fit)
                                 .clipShape(cell)
                                 .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
                         } else {
                             cell.fill(Color.primary.opacity(0.04))
+                                .aspectRatio(LibraryMetrics.pageAspect, contentMode: .fit)
                         }
                     }
                 }
@@ -293,13 +366,56 @@ enum LibraryFormat {
 struct SelectToolbarItem: ToolbarContent {
     @Binding var selection: LibrarySelection
     let isEmpty: Bool
+    /// Everything on screen, for Select All.
+    var allFolders: [UUID] = []
+    var allNotes: [UUID] = []
 
     var body: some ToolbarContent {
+        if selection.isActive {
+            ToolbarItem(placement: .topBarLeading) {
+                let allSelected = selection.count == allFolders.count + allNotes.count
+                Button(allSelected ? "Deselect All" : "Select All") {
+                    withAnimation(.snappy) { selection.toggleAll(folders: allFolders, notes: allNotes) }
+                }
+            }
+        }
         ToolbarItem(placement: .topBarTrailing) {
             Button(selection.isActive ? "Done" : "Select") {
                 withAnimation(.snappy) { selection.isActive ? selection.end() : selection.begin() }
             }
+            .fontWeight(selection.isActive ? .semibold : .regular)
             .disabled(isEmpty && !selection.isActive)
+        }
+    }
+}
+
+/// While selecting: a bottom bar to move the selection, put it in a new folder, or delete it, like Files and Notes.
+struct SelectionActionsToolbar: ToolbarContent {
+    let selection: LibrarySelection
+    @Binding var prompt: LibraryPrompt?
+    /// The folder on screen, where a new folder is made.
+    let folderID: UUID?
+    let delete: () -> Void
+
+    var body: some ToolbarContent {
+        if selection.isActive {
+            ToolbarItemGroup(placement: .bottomBar) {
+                Button("Move", systemImage: "folder") { prompt = .move(selection.ids) }
+                    .disabled(selection.count == 0)
+                Button("New Folder", systemImage: "folder.badge.plus") {
+                    prompt = .newFolder(parentID: folderID, items: selection.ids)
+                }
+                .disabled(selection.count == 0)
+                Spacer()
+                Text(selection.count == 0 ? "Select Items"
+                     : selection.count == 1 ? "1 Selected" : "\(selection.count) Selected")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(selection.count == 0 ? .secondary : .primary)
+                    .fixedSize()
+                Spacer()
+                Button("Delete", systemImage: "trash", role: .destructive, action: delete)
+                    .disabled(selection.count == 0)
+            }
         }
     }
 }
@@ -315,25 +431,11 @@ struct AddToolbarItem: ToolbarContent {
             Menu {
                 Button("New Note", systemImage: "square.and.pencil") { prompt = .newNote(folderID: folderID) }
                 if allowsFolders {
-                    Button("New Folder", systemImage: "folder.badge.plus") { prompt = .newFolder }
+                    Button("New Folder", systemImage: "folder.badge.plus") { prompt = .newFolder(parentID: folderID) }
                 }
                 Button("Import PDF", systemImage: "doc.badge.plus") { prompt = .importPDF(folderID: folderID) }
             } label: {
                 Label("Add", systemImage: "plus")
-            }
-        }
-    }
-}
-
-struct DeleteSelectionToolbarItem: ToolbarContent {
-    let selection: LibrarySelection
-    let action: () -> Void
-
-    var body: some ToolbarContent {
-        if selection.isActive {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Delete", systemImage: "trash", role: .destructive, action: action)
-                    .disabled(selection.count == 0)
             }
         }
     }
@@ -348,6 +450,8 @@ struct FolderMenu: View {
 
     var body: some View {
         Button("Rename", systemImage: "pencil") { prompt = .renameFolder(folder.id) }
+        Button("Move To…", systemImage: "folder") { prompt = .move([folder.id]) }
+        Button("New Folder Inside", systemImage: "folder.badge.plus") { prompt = .newFolder(parentID: folder.id) }
         Divider()
         Button("Delete Folder", systemImage: "trash", role: .destructive) {
             withAnimation { store.deleteFolder(folder) }
@@ -362,18 +466,7 @@ struct DocumentMenu: View {
 
     var body: some View {
         Button("Rename", systemImage: "pencil") { prompt = .renameNote(document.id) }
-        Menu("Move To", systemImage: "folder") {
-            Button("Documents", systemImage: "doc.on.doc") {
-                withAnimation { store.move(documentID: document.id, to: nil) }
-            }
-            .disabled(document.folderID == nil)
-            ForEach(store.folders) { folder in
-                Button(folder.name, systemImage: "folder") {
-                    withAnimation { store.move(documentID: document.id, to: folder.id) }
-                }
-                .disabled(document.folderID == folder.id)
-            }
-        }
+        Button("Move To…", systemImage: "folder") { prompt = .move([document.id]) }
         Divider()
         Button("Move to Trash", systemImage: "trash", role: .destructive) {
             withAnimation { store.moveToTrash(document) }
@@ -384,9 +477,11 @@ struct DocumentMenu: View {
 // MARK: - Prompts: naming, importing and dropping PDFs
 
 extension View {
-    /// Handles `prompt` (name alerts and the PDF picker) and accepts PDFs dropped onto the screen.
-    func libraryPrompts(_ prompt: Binding<LibraryPrompt?>, store: CanvasStore, dropFolderID: UUID?) -> some View {
-        modifier(LibraryPrompts(prompt: prompt, store: store, dropFolderID: dropFolderID))
+    /// Handles `prompt` (name alerts, the PDF picker and the Move sheet) and accepts PDFs dropped onto the screen.
+    /// `onMoved` runs after notes or folders are moved or put in a new folder, to end a selection.
+    func libraryPrompts(_ prompt: Binding<LibraryPrompt?>, store: CanvasStore, dropFolderID: UUID?,
+                        onMoved: @escaping () -> Void = {}) -> some View {
+        modifier(LibraryPrompts(prompt: prompt, store: store, dropFolderID: dropFolderID, onMoved: onMoved))
     }
 }
 
@@ -394,6 +489,7 @@ private struct LibraryPrompts: ViewModifier {
     @Binding var prompt: LibraryPrompt?
     let store: CanvasStore
     let dropFolderID: UUID?
+    let onMoved: () -> Void
 
     /// The prompt being answered, kept until the alert's buttons have run.
     @State private var active: LibraryPrompt?
@@ -414,7 +510,14 @@ private struct LibraryPrompts: ViewModifier {
                 Button("Cancel", role: .cancel) {}
                 Button(confirmTitle) { commit() }
             }
-            .fileImporter(isPresented: Binding(get: { prompt?.asksForName == false },
+            .sheet(item: Binding(get: { if case .move(let ids) = prompt { MoveRequest(ids: ids) } else { nil } },
+                                 set: { if $0 == nil { prompt = nil } })) { request in
+                MoveSheet(store: store, ids: request.ids) { target in
+                    withAnimation(.snappy) { store.move(request.ids, to: target) }
+                    onMoved()
+                }
+            }
+            .fileImporter(isPresented: Binding(get: { prompt?.isImport == true },
                                                set: { if !$0 { prompt = nil } }),
                           allowedContentTypes: [.pdf], allowsMultipleSelection: true) { result in
                 importPicked(result)
@@ -442,6 +545,8 @@ private struct LibraryPrompts: ViewModifier {
     private var title: String {
         switch active {
         case .newNote: "New Note"
+        case .newFolder(_, let items) where !items.isEmpty:
+            items.count == 1 ? "New Folder with 1 Item" : "New Folder with \(items.count) Items"
         case .newFolder: "New Folder"
         case .renameNote: "Rename Note"
         case .renameFolder: "Rename Folder"
@@ -469,7 +574,7 @@ private struct LibraryPrompts: ViewModifier {
         case .newFolder: "New Folder"
         case .renameNote(let id): store.document(id)?.title ?? ""
         case .renameFolder(let id): store.folder(id)?.name ?? ""
-        case .importPDF: ""
+        case .importPDF, .move: ""
         }
     }
 
@@ -477,10 +582,15 @@ private struct LibraryPrompts: ViewModifier {
         withAnimation {
             switch active {
             case .newNote(let folderID): store.createNote(title: text, in: folderID)
-            case .newFolder: store.createFolder(name: text)
+            case .newFolder(let parentID, let items):
+                let folder = store.createFolder(name: text, in: parentID)
+                if !items.isEmpty {
+                    store.move(items, to: folder.id)
+                    onMoved()
+                }
             case .renameNote(let id): store.rename(documentID: id, to: text)
             case .renameFolder(let id): store.rename(folderID: id, to: text)
-            case .importPDF, nil: break
+            case .importPDF, .move, nil: break
             }
         }
         active = nil
@@ -525,6 +635,127 @@ private struct LibraryPrompts: ViewModifier {
                 }
             }
         }
+    }
+}
+
+// MARK: - Move sheet
+
+private struct MoveRequest: Identifiable {
+    let ids: [UUID]
+    var id: String { ids.map(\.uuidString).joined() }
+}
+
+/// "Move 3 Items": Documents and every folder as an indented tree. Tap one to move there. Where the items already
+/// are, and folders they can't go into (a folder can't go inside itself), are greyed out. New Folder makes one
+/// inside the highlighted folder and moves everything there.
+struct MoveSheet: View {
+    let store: CanvasStore
+    let ids: [UUID]
+    let move: (UUID?) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var naming = false
+    @State private var newName = "New Folder"
+    /// Where New Folder puts the folder it makes.
+    @State private var parentForNew: UUID?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                row(name: "Documents", symbol: "doc.on.doc", folderID: nil, depth: 0)
+                ForEach(tree, id: \.folder.id) { entry in
+                    row(name: entry.folder.name, symbol: "folder", folderID: entry.folder.id, depth: entry.depth + 1)
+                }
+            }
+            .listStyle(.insetGrouped)
+            .roundedTitle(title, inline: true)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .bottomBar) {
+                    Button("New Folder", systemImage: "folder.badge.plus") {
+                        newName = "New Folder"
+                        naming = true
+                    }
+                    .labelStyle(.titleAndIcon)
+                }
+            }
+            .alert("New Folder", isPresented: $naming) {
+                TextField("Folder name", text: $newName)
+                Button("Cancel", role: .cancel) {}
+                Button("Create and Move") {
+                    let folder = withAnimation { store.createFolder(name: newName, in: firstValidParent) }
+                    choose(folder.id)
+                }
+            } message: {
+                Text("Made inside \(store.locationName(firstValidParent)), with the items moved into it.")
+            }
+        }
+    }
+
+    private var title: String {
+        ids.count == 1 ? "Move 1 Item" : "Move \(ids.count) Items"
+    }
+
+    /// Every folder, depth first, each under its parent.
+    private var tree: [(folder: CanvasFolder, depth: Int)] {
+        var out: [(CanvasFolder, Int)] = []
+        func walk(_ parent: UUID?, _ depth: Int) {
+            for folder in store.folders(in: parent) {
+                out.append((folder, depth))
+                walk(folder.id, depth + 1)
+            }
+        }
+        walk(nil, 0)
+        return out
+    }
+
+    /// Where everything selected already is, if it's all in one place.
+    private var commonLocation: UUID?? {
+        let places = Set(ids.map { store.location(of: $0) })
+        return places.count == 1 ? places.first : .none
+    }
+
+    private func isAvailable(_ folderID: UUID?) -> Bool {
+        if let common = commonLocation, common == folderID { return false }
+        return ids.contains { store.canMove($0, to: folderID) && store.location(of: $0) != folderID }
+    }
+
+    /// New folders go where the items are now, so New Folder groups them in place.
+    private var firstValidParent: UUID? { commonLocation ?? nil }
+
+    private func row(name: String, symbol: String, folderID: UUID?, depth: Int) -> some View {
+        let available = isAvailable(folderID)
+        let here = commonLocation.map { $0 == folderID } ?? false
+        return Button {
+            choose(folderID)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: symbol)
+                    .foregroundStyle(available ? Color.accentColor : Color.secondary)
+                    .frame(width: 24)
+                Text(name)
+                    .font(.system(size: 17, weight: .regular, design: .rounded))
+                    .foregroundStyle(available ? .primary : .secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if here {
+                    Text("Current")
+                        .font(.system(size: 15, weight: .regular, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.leading, CGFloat(depth) * 24)
+            .frame(minHeight: 36)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!available)
+    }
+
+    private func choose(_ folderID: UUID?) {
+        move(folderID)
+        dismiss()
     }
 }
 

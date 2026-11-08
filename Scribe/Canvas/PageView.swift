@@ -1,5 +1,6 @@
 import PencilKit
 import SwiftUI
+import UIKit.UIGestureRecognizerSubclass
 
 /// One page, edge to edge: paper and background (or a PDF page), photos, the agent's ink, the person's ink, the agent's cards, and a photo being
 /// placed. Everything is laid out in page points and scaled by `width / NotePageMetrics.width`.
@@ -56,6 +57,17 @@ struct PageView: View {
                     .offset(x: card.frame.minX * k, y: card.frame.minY * k)
             }
 
+            if let lasso = model.lasso, lasso.pageID == page.id {
+                LassoOverlay(model: model, selection: lasso, scale: k, pageSize: size)
+                    .frame(width: size.width, height: size.height)
+                    .transition(.opacity)
+            }
+            if let spot = model.pasteSpot, spot.pageID == page.id {
+                InkPasteButton(model: model, spot: spot, scale: k)
+                    .frame(width: size.width, height: size.height)
+                    .transition(.opacity)
+            }
+
             if let selection = model.selectedImage, selection.pageID == page.id,
                let placed = model.placedImage(selection), let image = model.image(named: placed.fileName) {
                 ImageSelectionOverlay(model: model, selection: selection, placed: placed, image: image, scale: k,
@@ -71,6 +83,8 @@ struct PageView: View {
         }
         .frame(width: size.width, height: size.height)
         .clipped()
+        // Where the page is on screen, for the agent's cursor and for keeping its ink out from under the controls.
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { model.frames.pages[page.id] = $0 }
         .accessibilityElement(children: .contain)
     }
 }
@@ -175,6 +189,15 @@ struct InkCanvas: UIViewRepresentable {
         doubleTap.cancelsTouchesInView = false
         doubleTap.delegate = context.coordinator
         canvas.addGestureRecognizer(doubleTap)
+        // The eraser also erases the agent's marks, which aren't PencilKit ink.
+        let eraser = context.coordinator.markEraser
+        eraser.delegate = context.coordinator
+        eraser.addTarget(context.coordinator, action: #selector(Coordinator.erased(_:)))
+        canvas.addGestureRecognizer(eraser)
+        // Scribe's own lasso, so what it selects can go to the agent.
+        let lasso = context.coordinator.lasso
+        lasso.pan.delegate = context.coordinator
+        lasso.attach(to: canvas)
         return canvas
     }
 
@@ -200,6 +223,19 @@ struct InkCanvas: UIViewRepresentable {
         let policy: PKCanvasViewDrawingPolicy = drawWithFinger ? .anyInput : .pencilOnly
         if canvas.drawingPolicy != policy { canvas.drawingPolicy = policy }
 
+        // With the lasso, the loop is drawn by `LassoTracker`; PencilKit's own lasso can't tell us what it selected.
+        let lassoing = model.palette.tool == .lasso
+        if canvas.drawingGestureRecognizer.isEnabled == lassoing { canvas.drawingGestureRecognizer.isEnabled = !lassoing }
+        coordinator.lasso.scale = scale
+        coordinator.lasso.setEnabled(lassoing, fingers: drawWithFinger)
+        let pageID = pageID
+        coordinator.lasso.finished = { [weak model] path in model?.finishLasso(on: pageID, path: path) }
+
+        let erasing = model.palette.tool == .eraser
+        if coordinator.markEraser.isEnabled != erasing { coordinator.markEraser.isEnabled = erasing }
+        let touchTypes = (drawWithFinger ? [UITouch.TouchType.pencil, .direct] : [.pencil]).map { NSNumber(value: $0.rawValue) }
+        if coordinator.markEraser.allowedTouchTypes != touchTypes { coordinator.markEraser.allowedTouchTypes = touchTypes }
+
         if coordinator.token != reloadToken { coordinator.load(into: canvas) }
     }
 
@@ -209,6 +245,9 @@ struct InkCanvas: UIViewRepresentable {
         var token = -1
         var scale: CGFloat = 1
         var zoom: PageZoomGestures?
+        let lasso = MainActor.assumeIsolated { LassoTracker() }
+        let markEraser = MainActor.assumeIsolated { TouchTracker() }
+        private var lastErasePoint: CGPoint?
         private var loading = false
         /// What `load` last put on the canvas, until the person changes it. PencilKit can report a drawing it was
         /// just given as a change; that echo isn't an edit.
@@ -235,6 +274,28 @@ struct InkCanvas: UIViewRepresentable {
             guard let view = tap.view, scale > 0 else { return }
             let point = tap.location(in: view)
             model.tapPage(pageID, at: CGPoint(x: point.x / scale, y: point.y / scale))
+        }
+
+        /// The eraser moving over the page: erases the agent's marks it passes over (PencilKit erases the ink).
+        @MainActor @objc func erased(_ tracker: TouchTracker) {
+            guard let view = tracker.view, scale > 0 else { return }
+            let p = tracker.location(in: view)
+            let point = CGPoint(x: p.x / scale, y: p.y / scale)
+            let pixel = model.palette.eraserMode == .pixel
+            // About what PencilKit's erasers reach, on screen.
+            let radius = (pixel ? 8 : 10) / scale
+            switch tracker.state {
+            case .began:
+                model.beginErasingAgentMarks(on: pageID)
+                model.eraseAgentMarks(on: pageID, from: point, to: point, radius: radius, pixel: pixel)
+                lastErasePoint = point
+            case .changed:
+                model.eraseAgentMarks(on: pageID, from: lastErasePoint ?? point, to: point, radius: radius, pixel: pixel)
+                lastErasePoint = point
+            default:
+                lastErasePoint = nil
+                model.endErasingAgentMarks()
+            }
         }
 
         @MainActor @objc func pinched(_ pinch: UIPinchGestureRecognizer) {
@@ -309,13 +370,32 @@ struct InkCanvas: UIViewRepresentable {
             zoom.doubleTapped(tap.location(in: view))
         }
 
-        /// The tap works alongside drawing (with finger drawing on, a tap is also a dot of ink).
+        /// The tap works alongside drawing (with finger drawing on, a tap is also a dot of ink). The lasso doesn't
+        /// share its touch with the scroll views around the page: drawing a loop mustn't scroll or turn the page.
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            let lassoPan = MainActor.assumeIsolated { lasso.pan }
+            if gestureRecognizer === lassoPan || other === lassoPan { return !Self.isScrolling(other) && !Self.isScrolling(gestureRecognizer) }
+            return true
+        }
 
-        /// Starting to draw or erase puts the selected image down.
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+            let lassoPan = MainActor.assumeIsolated { lasso.pan }
+            return gestureRecognizer === lassoPan && Self.isScrolling(other)
+        }
+
+        private static func isScrolling(_ recognizer: UIGestureRecognizer) -> Bool {
+            recognizer is UIPanGestureRecognizer && recognizer.view is UIScrollView
+                && !(recognizer.view is PKCanvasView)
+        }
+
+        /// Starting to draw or erase puts the selected image down, and the agent's text answer away.
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
-            MainActor.assumeIsolated { model.selectedImage = nil }
+            MainActor.assumeIsolated {
+                model.selectedImage = nil
+                model.penDown()
+            }
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
@@ -639,5 +719,38 @@ private struct ImageSelectionOverlay: View {
         let above = bounds.minY * scale - 84
         let y = below < pageSize.height - 110 || above < 90 ? below : above
         return CGPoint(x: x, y: y)
+    }
+}
+
+/// Follows one touch from start to end without claiming it: whatever else is using the touch (PencilKit's eraser)
+/// keeps it.
+final class TouchTracker: UIGestureRecognizer {
+    override init(target: Any?, action: Selector?) {
+        super.init(target: target, action: action)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+    }
+
+    convenience init() { self.init(target: nil, action: nil) }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard state == .possible, touches.count == 1, (event.allTouches?.count ?? 1) == 1 else {
+            if state == .possible { state = .failed }
+            return
+        }
+        state = .began
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        if state == .began || state == .changed { state = .changed }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = state == .possible ? .failed : .ended
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = state == .possible ? .failed : .cancelled
     }
 }

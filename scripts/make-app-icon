@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Generate the "Dart" app icon from the agent's ink colour.
+
+Reads InkSwatch.blueHex (the agent's ink) from Scribe/Canvas/ToolPalette.swift, writes the three SVGs to
+Design/AppIcon/, renders them to 1024x1024 sRGB PNGs and copies those into AppIcon.appiconset.
+Re-run it whenever the agent colour changes.
+
+Needs rsvg-convert (`brew install librsvg`) and Pillow.
+"""
+import io
+import json
+import pathlib
+import re
+import subprocess
+
+from PIL import Image, ImageCms
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+PALETTE = ROOT / "Scribe/Canvas/ToolPalette.swift"
+DESIGN = ROOT / "Design/AppIcon"
+ICONSET = ROOT / "Scribe/Assets.xcassets/AppIcon.appiconset"
+
+# The dart on a 100x100 grid, symmetric about y = x: tip, wing, notch, mirrored wing.
+DART = "M27 27 L75 46 L51 51 L46 75 Z"
+
+
+def agent_ink() -> tuple[str, str]:
+    """(light, dark) hex of the agent's ink. The ink has no dark variant: pages stay white."""
+    src = PALETTE.read_text()
+    m = re.search(r'static let blueHex = "(#[0-9A-Fa-f]{6})"', src)
+    if not m:
+        raise SystemExit(f"couldn't find InkSwatch.blueHex in {PALETTE}")
+    dark = re.search(r'static let blueHexDark = "(#[0-9A-Fa-f]{6})"', src)
+    light = m.group(1).upper()
+    return light, (dark.group(1).upper() if dark else light)
+
+
+def svg(ink: str, background: str | None) -> str:
+    rect = f'  <rect width="100" height="100" fill="{background}"/>\n' if background else ""
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="1024" height="1024">\n'
+        f"{rect}"
+        f'  <path d="{DART}" fill="{ink}" stroke="{ink}" stroke-width="4" stroke-linejoin="round"/>\n'
+        "</svg>\n"
+    )
+
+
+def render(svg_path: pathlib.Path, png_path: pathlib.Path, opaque: bool) -> None:
+    raw = subprocess.run(["rsvg-convert", "-w", "1024", "-h", "1024", str(svg_path)],
+                         check=True, capture_output=True).stdout
+    img = Image.open(io.BytesIO(raw)).convert("RGBA")
+    if opaque:  # Flatten onto white and drop the alpha channel entirely.
+        flat = Image.new("RGB", img.size, (255, 255, 255))
+        flat.paste(img, mask=img.getchannel("A"))
+        img = flat
+    srgb = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    img.save(png_path, "PNG", icc_profile=srgb)
+
+
+def main() -> None:
+    light, dark = agent_ink()
+    DESIGN.mkdir(parents=True, exist_ok=True)
+    variants = [  # name, ink, background, opaque
+        ("AppIcon-Light", light, "#FFFFFF", True),
+        ("AppIcon-Dark", dark, None, False),  # iOS supplies the dark background.
+        ("AppIcon-Tinted", "#FFFFFF", None, False),  # Grayscale; iOS applies the tint.
+    ]
+    for name, ink, bg, opaque in variants:
+        s = DESIGN / f"{name}.svg"
+        s.write_text(svg(ink, bg))
+        render(s, DESIGN / f"{name}.png", opaque)
+
+    # Replace the icon set with exactly these three images.
+    ICONSET.mkdir(parents=True, exist_ok=True)
+    for old in ICONSET.glob("*.png"):
+        old.unlink()
+    for name, *_ in variants:
+        (ICONSET / f"{name}.png").write_bytes((DESIGN / f"{name}.png").read_bytes())
+
+    def entry(name: str, appearance: str | None) -> dict:
+        e = {"filename": f"{name}.png", "idiom": "universal", "platform": "ios", "size": "1024x1024"}
+        if appearance:
+            e = {"appearances": [{"appearance": "luminosity", "value": appearance}], **e}
+        return e
+
+    contents = {
+        "images": [entry("AppIcon-Light", None), entry("AppIcon-Dark", "dark"), entry("AppIcon-Tinted", "tinted")],
+        "info": {"author": "xcode", "version": 1},
+    }
+    (ICONSET / "Contents.json").write_text(json.dumps(contents, indent=2) + "\n")
+    print(f"Dart icon: ink {light} (dark {dark}) -> {DESIGN.relative_to(ROOT)}, {ICONSET.relative_to(ROOT)}")
+
+
+if __name__ == "__main__":
+    main()

@@ -6,18 +6,18 @@ struct Visualization: Identifiable, Codable, Equatable {
     var id = UUID()
     var date = Date()
     var title: String
-    /// One line under the card: what the person can try.
+    /// A line under the card from older notes. No longer asked for or shown; kept so those notes still open.
     var caption: String?
     /// The whole page, run in `CardSandbox`.
     var html: String
-    /// The page's height in points (the header and caption are extra).
+    /// The page's height in points (the header is extra).
     var height: CGFloat = Visualization.defaultHeight
 
     /// A typical card width (300 to 400, with the screen); pages must fit any width.
     static let pageWidth: CGFloat = 360
-    static let defaultHeight: CGFloat = 300
+    static let defaultHeight: CGFloat = 260
     /// The heights the agent (or the page itself) may ask for.
-    static let heights: ClosedRange<CGFloat> = 220...560
+    static let heights: ClosedRange<CGFloat> = 220...440
     /// The largest page the agent may send, in UTF-8 bytes.
     static let maxBytes = 80_000
 }
@@ -32,18 +32,24 @@ enum VisualizationTool {
         The app injects a dark stylesheet and a small kit into every page; use them so visualizations look alike. \
         CSS variables: --stage (#0E0E10 background), --curve #58C4DD (main curve), --result #FFFF00 (result, tangent), \
         --second #F0AC5F, --rise #83C167, --primary #FFF, --grid, --axes, --warn #FF9F0A, --ok #7EE29A, --red, --muted, \
-        --text, --label; classes .math (STIX serif maths; use <i> for variables), .readout, .note. \
+        --text, --label; classes .math (use <i> for variables), .note. \
+        Text: the card uses one font, SF Pro Rounded, in regular or semibold, and the app enforces it on every element \
+        and on canvas text. Don't set font families (no serif, no Times, no monospace); on a canvas use \
+        ctx.font = Card.font(14) or Card.font(14, 600). \
         JS (global `Card`, ready before your scripts run): \
         const s = Card.stage() → {canvas, ctx, width, height, clear()}: a canvas filling the card above the dock, ctx \
         already scaled for the screen; width/height stay current, redraw in Card.onResize(fn). \
         Card.timeline({duration: s, phases: [["Build", 1], ["Spin", 2]], onFrame: t => draw(t), loop: false}) adds the \
         app's play/scrub bar and plays once by itself (t 0→1; phases are relative shares); Card.phase(t, i) is the eased \
         progress through phase i. Card.slider({label, min, max, value, step, onInput: v => …, format: v => text}) adds a \
-        slider above it (label: a symbol like θ or <i>n</i>, or one short word). Card.choice({label, options: ["Sine", \
+        slider above it (label: a symbol like θ or <i>n</i>, or one short capitalised word). Card.choice({label, options: ["Sine", \
         "Cosine"] or [["Sine", "sin"], …], value, onChange: v => …}) adds a row of buttons, one chosen (shapes, modes, \
         functions, presets). Card.toggle({label: "Tangent", value: true, onChange: on => …}) adds an on/off button (show \
-        or hide a part, a trail, labels, axes); toggles share one row. Each returns {value, set(v)}. \
-        Card.readout(text) sets the live readout in the card's header. Card.ease(t), Card.lerp(a, b, t), Card.clamp(x, a, b). \
+        or hide the one part that matters); toggles share one row. Each returns {value, set(v)}. \
+        Animate from time, never by a fixed step per frame: use the dt or elapsed time the kit gives you, or the \
+        requestAnimationFrame timestamp, so the card's Pause button freezes it. \
+        Card.readout(text) sets the live readout: plain text in grey under the picture, above the controls ("\\n" \
+        starts a second line). Card.ease(t), Card.lerp(a, b, t), Card.clamp(x, a, b). \
         Card.color.curve etc. hold the colours above. \
         3D: load <script src="app://lib/three.min.js"></script> (three r149, global THREE; no addons, no OrbitControls) \
         before your script, then const v = Card.three({distance: 6, elevation: 1.1, target: [0, 0, 0], autoRotate: true}) → \
@@ -62,31 +68,66 @@ enum VisualizationTool {
         wave, secant → tangent), or data with a slider to explore. Prefer 3D (three.js) whenever the subject is a \
         physical object or a shape in space. \
         Each call adds one new visualization below the earlier ones; keep it focused on one idea. \
-        Give almost every visualization controls, so the person can play with it rather than just watch: one to three \
-        Card.slider for the quantities that matter (an angle, a speed, a mass, a number of sides, n, a frequency, a \
-        coefficient), Card.choice to switch between cases, Card.toggle to show or hide parts, and Card.timeline when it \
-        plays out over time. Every control changes the picture live, and the readout shows the numbers it changes. \
-        Only leave controls out when there is truly nothing to vary. \
-        The page: one self-contained document ≤ 60 KB, `height` pt tall (default \(Int(Visualization.defaultHeight))) and \
-        300–400 pt wide depending on the screen (the person can also enlarge it to fill the screen); the controls take \
-        about 44 pt each from that height, so make `height` taller when there are several. Size everything from the \
+        Keep the card clean and simple, so it is understood at a glance: the picture does the explaining. Write no \
+        instructions, captions, legends or paragraphs on the page; say any explanation aloud instead. Text on the \
+        stage is only short labels on the drawing itself (an axis name, a point, a planet). \
+        Controls: use as few as the idea needs, often just one. A Card.slider for the quantity that matters (an angle, \
+        a speed, n, a coefficient), or letting the person drag the thing itself, is usually best; Card.timeline when it \
+        plays out over time. Add Card.choice or Card.toggle buttons only when switching really helps the person \
+        understand (comparing two cases side by side, revealing the tangent that is the point); never for cosmetic \
+        things like showing labels, a grid, axes or a wireframe. No controls at all is fine when the picture already \
+        says it. Every control changes the picture live. \
+        The readout is the only text under the picture: one line, two at most, with the few values that change as the \
+        person plays. Write it like a short sentence fragment, capitalised properly: the first word of each line starts \
+        with a capital letter ("Slope 3.31 at x = −1.05", "Faces 6, edges 12, vertices 8", "Period 2.0 s"); maths \
+        symbols keep their own case. Separate values with commas or put them on a second line. Never use "·", "|", \
+        em dashes or en dashes, here or anywhere on the card. No explanations, no formulas the title already shows. \
+        Leave it out when nothing changes. \
+        The page: one self-contained document ≤ 60 KB, `height` pt tall (default \(Int(Visualization.defaultHeight)), \
+        keep it compact) and 300 to 400 pt wide depending on the screen (the person can also enlarge it to fill the \
+        screen); each control takes about 40 pt of that height, so add that for each one. Size everything from the \
         stage's width and height, never fixed pixels. \
         No network, no storage, no alerts, no external URLs; everything inline. Make it animate by itself at first, then \
         let the person drag, scrub or slide. Keep the maths and science right: compute values in code, don't hard-code \
-        them. The app shows `title` and `caption` around the page; don't draw your own title bar. The title just \
-        names the thing, as a heading would ("The solar system", "Pendulum", "A cube's faces"): never add "in 3D", \
-        "visualization", "interactive", "model of" or the like. \
+        them. The app shows `title` above the page; don't draw your own title bar. The title just names the thing, as \
+        a heading would ("The solar system", "Pendulum", "y = x^3"): never add "in 3D", "visualization", \
+        "interactive", "model of" or the like. \
         \(cardKit) \
         If the page throws an error while loading, or draws nothing, you get the problem back: fix it and call \
         \(name) once more. \
-        Example: {"title": "Prisms", "caption": "Drag to turn it; change the number of sides.", "height": 380, "html": \
+        Example: {"title": "Prisms", "height": 320, "html": \
         "<script src=\\"app://lib/three.min.js\\"></script><script>const v = Card.three({distance: 5}); \
         const mat = new THREE.MeshStandardMaterial({color: Card.color.curve}); let prism; \
         function build(n) { if (prism) v.scene.remove(prism); prism = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 1.8, n), mat); \
-        v.scene.add(prism); Card.readout(`faces: ${n + 2} · edges: ${3 * n} · vertices: ${2 * n}`); } \
-        build(4); Card.slider({label: 'sides', min: 3, max: 12, step: 1, value: 4, onInput: build}); \
-        Card.toggle({label: 'Wireframe', value: false, onChange: on => { mat.wireframe = on; }});</script>"}
+        v.scene.add(prism); Card.readout(`Faces ${n + 2}, edges ${3 * n}, vertices ${2 * n}`); } \
+        build(4); Card.slider({label: 'Sides', min: 3, max: 12, step: 1, value: 4, onInput: build});</script>"}
         """
+
+    /// Remaking a visualization the person found unclear: a request of its own, outside the conversation.
+    static let remakeSystem = """
+        You remake visualizations in Scribe, an iPad notebook. Answer only by calling \(name) once, with no text \
+        before or after it.
+        """
+
+    static func remakeRequest(_ old: Visualization, recent: [String]) -> String {
+        let talk = recent.isEmpty ? "" : "\n\nThe recent conversation, for what they wanted to see:\n" + recent.joined(separator: "\n")
+        return """
+            The person tapped Remake on this visualization: it wasn't clear enough for them. Make it again, about the \
+            same idea, so it is clearer and simpler.
+            - Rethink it rather than patching the old page; keep only what clearly worked.
+            - Show the one idea big and plain, with less on screen than before: fewer curves, colours, labels, \
+            numbers and controls. Remove anything decorative.
+            - Fix whatever was confusing, cramped, hard to read, too small or wrong.
+            - Keep the title unless a plainer one names it better.
+            - Follow every rule in the tool description: one font, a short properly capitalised readout under the \
+            picture, only the controls that help understanding.\(talk)
+
+            The old visualization (title “\(old.title)”, height \(Int(old.height))):
+            ```html
+            \(old.html)
+            ```
+            """
+    }
 
     static var definition: JSONValue {
         [
@@ -97,8 +138,7 @@ enum VisualizationTool {
                 "properties": [
                     "title": ["type": "string", "description": "What it shows, as a plain heading, ≤ 5 words (\"The solar system\", \"Pendulum\"); never \"in 3D\" or \"visualization\". Maths may use ^ (f(x) = x^3)."],
                     "html": ["type": "string", "description": "The whole page, ≤ 60 KB."],
-                    "caption": ["type": "string", "description": "One line under the card: what the person can try with it (\"Drag to turn it; slide the angle.\")."],
-                    "height": ["type": "number", "description": "Page height in points, controls included, 220–560. Default 300."]
+                    "height": ["type": "number", "description": "Page height in points, controls included, 220 to 440. Default 260; keep it compact."]
                 ],
                 "required": ["title", "html"],
                 "additionalProperties": false
@@ -118,11 +158,9 @@ enum VisualizationTool {
         guard html.utf8.count <= Visualization.maxBytes else {
             return .failure(InputError("the page is \(html.utf8.count / 1000) KB; keep it under 60 KB"))
         }
-        let caption = input["caption"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
         let height = input["height"]?.number.map { min(max(CGFloat($0), Visualization.heights.lowerBound),
                                                       Visualization.heights.upperBound) }
-        return .success(Visualization(title: String(title.prefix(80)), caption: caption?.isEmpty == false ? caption : nil,
-                                      html: html, height: height ?? Visualization.defaultHeight))
+        return .success(Visualization(title: String(title.prefix(80)), html: html, height: height ?? Visualization.defaultHeight))
     }
 
     struct InputError: Error {

@@ -1,10 +1,12 @@
 import Foundation
 import Observation
 
-/// A folder in the library. Folders hold notes; they don't nest.
+/// A folder in the library. Folders hold notes and other folders.
 struct CanvasFolder: Identifiable, Codable, Hashable {
     var id = UUID()
     var name: String
+    /// The folder it lives in, or nil for the top of Documents. Libraries saved before folders nested have none.
+    var parentID: UUID?
     var createdAt = Date()
 }
 
@@ -75,6 +77,61 @@ final class CanvasStore {
     }
 
     func folder(_ id: UUID) -> CanvasFolder? { folders.first { $0.id == id } }
+
+    /// The folders directly inside a folder (or at the top of Documents, for nil), by name.
+    func folders(in parentID: UUID?) -> [CanvasFolder] {
+        folders.filter { $0.parentID == parentID }
+    }
+
+    /// The folders a folder sits inside, outermost first, not including itself.
+    func ancestors(of folderID: UUID) -> [CanvasFolder] {
+        var chain: [CanvasFolder] = []
+        var seen: Set<UUID> = [folderID]
+        var next = folder(folderID)?.parentID
+        while let id = next, seen.insert(id).inserted, let parent = folder(id) {
+            chain.insert(parent, at: 0)
+            next = parent.parentID
+        }
+        return chain
+    }
+
+    /// Where something lives, for captions: "Documents", or "Physics › Waves".
+    func locationName(_ folderID: UUID?) -> String {
+        guard let folderID, let folder = folder(folderID) else { return "Documents" }
+        return (ancestors(of: folderID) + [folder]).map(\.name).joined(separator: " › ")
+    }
+
+    /// Whether `folderID` is `ancestorID` or sits somewhere inside it.
+    func isFolder(_ folderID: UUID?, within ancestorID: UUID) -> Bool {
+        guard let folderID else { return false }
+        return folderID == ancestorID || ancestors(of: folderID).contains { $0.id == ancestorID }
+    }
+
+    /// Every note in a folder and the folders inside it, newest first.
+    func allDocuments(within folderID: UUID) -> [CanvasDocument] {
+        documents.filter { isFolder($0.folderID, within: folderID) }.sorted { $0.modifiedAt > $1.modifiedAt }
+    }
+
+    /// How many folders and notes sit directly in a folder.
+    func itemCount(in folderID: UUID) -> Int {
+        folders(in: folderID).count + documents(inFolder: folderID).count
+    }
+
+    /// Whether something with this ID could go into `target`: a folder can't go inside itself.
+    func canMove(_ id: UUID, to target: UUID?) -> Bool {
+        if let folder = folder(id) {
+            guard let target else { return true }
+            return !isFolder(target, within: folder.id)
+        }
+        return document(id) != nil
+    }
+
+    /// The folder something lives in (nil for the top of Documents), whether it's a note or a folder.
+    func location(of id: UUID) -> UUID? {
+        if let folder = folder(id) { return folder.parentID }
+        return document(id)?.folderID
+    }
+
     func document(_ id: UUID) -> CanvasDocument? { all.first { $0.id == id } }
 
     func fileURL(for document: CanvasDocument) -> URL? {
@@ -111,8 +168,9 @@ final class CanvasStore {
     }
 
     @discardableResult
-    func createFolder(name: String) -> CanvasFolder {
-        let folder = CanvasFolder(name: Self.clean(name, fallback: "New Folder"))
+    func createFolder(name: String, in parentID: UUID? = nil) -> CanvasFolder {
+        let folder = CanvasFolder(name: Self.clean(name, fallback: "New Folder"),
+                                  parentID: parentID.flatMap { self.folder($0)?.id })
         folders.append(folder)
         sortFolders()
         save()
@@ -154,6 +212,28 @@ final class CanvasStore {
         update(documentID) { $0.folderID = folderID; $0.trashedAt = nil }
     }
 
+    /// Moves notes and folders (mixed, by ID) into a folder, or to the top of Documents for nil. Skips a folder that
+    /// would end up inside itself. Returns how many moved.
+    @discardableResult
+    func move(_ ids: some Sequence<UUID>, to target: UUID?) -> Int {
+        if let target, folder(target) == nil { return 0 }
+        var moved = 0
+        for id in ids where canMove(id, to: target) {
+            if let i = folders.firstIndex(where: { $0.id == id }) {
+                guard folders[i].parentID != target else { continue }
+                folders[i].parentID = target
+                moved += 1
+            } else if let i = all.firstIndex(where: { $0.id == id }) {
+                guard all[i].folderID != target || all[i].isTrashed else { continue }
+                all[i].folderID = target
+                all[i].trashedAt = nil
+                moved += 1
+            }
+        }
+        if moved > 0 { save() }
+        return moved
+    }
+
     func markOpened(_ documentID: UUID) {
         update(documentID) { $0.openedAt = .now }
     }
@@ -183,9 +263,11 @@ final class CanvasStore {
         trash.forEach(deletePermanently)
     }
 
-    /// Deletes a folder. Its notes move loose into Documents.
+    /// Deletes a folder. What was inside it (notes and folders) moves up into the folder that held it.
     func deleteFolder(_ folder: CanvasFolder) {
-        for i in all.indices where all[i].folderID == folder.id { all[i].folderID = nil }
+        let parent = self.folder(folder.id)?.parentID
+        for i in all.indices where all[i].folderID == folder.id { all[i].folderID = parent }
+        for i in folders.indices where folders[i].parentID == folder.id { folders[i].parentID = parent }
         folders.removeAll { $0.id == folder.id }
         save()
     }

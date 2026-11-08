@@ -17,6 +17,8 @@ enum ActionValidator {
         var isError = false
         /// Snapping and placement notes, for the debug log.
         var notes: [String] = []
+        /// It didn't fit on a page that can't grow (a document page): it belongs on a blank page after it.
+        var overflow = false
 
         static func reject(_ reason: String, notes: [String] = []) -> ToolDecision {
             ToolDecision(result: "rejected: " + reason, isError: true, notes: notes)
@@ -61,7 +63,7 @@ enum ActionValidator {
         var obstacles: [CGRect] {
             let printed = map.objects.filter { $0.source == .printed && !PageLayout.nestedKinds.contains($0.kind) }.map(\.bounds)
             let cards = map.objects.filter { $0.source == .card }.map(\.bounds)
-            return hardObstacles + printed + cards + placed
+            return hardObstacles + printed + cards + placed + chrome
         }
 
         /// True when `r` would sit on anything: an obstacle's box or a drawn pixel.
@@ -70,13 +72,40 @@ enum ActionValidator {
             return !(occupancy?.isFree(r.insetBy(dx: -2, dy: -2)) ?? true)
         }
 
-        /// Note, label and maths sizes follow their handwriting.
+        /// Note, label and maths sizes: the landing page's handwriting (26 pt notes, 22 pt labels on a 1194 pt wide
+        /// screen), in page points. They stay put however large the person writes, so the agent's ink stays quiet
+        /// beside theirs.
         func textSize(_ size: WriteSize) -> CGFloat {
             switch size {
-            case .note: min(44, max(26, inkHeight * 1.2))
-            case .label: min(34, max(20, inkHeight * 0.9))
-            case .math: min(50, max(30, inkHeight * 1.35))
+            case .note: 24
+            case .label: 20
+            case .math: 26
             }
+        }
+
+        /// Where the floating controls cover the page (page points). Nothing the agent makes goes under them.
+        var chrome: [CGRect] = []
+        /// False for a page of an imported document: it keeps its size, so it still prints and exports like the
+        /// original. What doesn't fit goes on a blank page after it instead.
+        var canGrow = true
+        /// A blank page the agent took for what didn't fit on the page before it: anything goes anywhere on it, from
+        /// the top down.
+        var scratch = false
+        /// Set by placement when nothing fits and the page can't grow.
+        fileprivate var overflowed = false
+
+        /// `r` moved straight down (or, near the bottom, up) until it's clear of the controls.
+        func clearOfChrome(_ r: CGRect) -> CGRect {
+            var out = r
+            for _ in 0..<4 {
+                guard let hit = chrome.first(where: { $0.insetBy(dx: -6, dy: -6).intersects(out) }) else { break }
+                if hit.midY < pageSize.height / 2 {
+                    out.origin.y = hit.maxY + 10
+                } else {
+                    out.origin.y = hit.minY - 10 - out.height
+                }
+            }
+            return out
         }
     }
 
@@ -103,6 +132,12 @@ enum ActionValidator {
             return .reject(error.reason)
         } catch {
             return .reject("the input isn't valid")
+        }
+        if context.overflowed {
+            context.overflowed = false
+            var overflow = ToolDecision.reject("there's no room for it on this page")
+            overflow.overflow = true
+            return overflow
         }
         guard !decision.isError else { return decision }
         // The new marks' ids, so the agent can erase them.
@@ -180,11 +215,11 @@ enum ActionValidator {
         if let at = input.at {
             guard at.count == 2 else { return .reject("`at` must be [x, y]") }
             let r = CGRect(x: at[0] - box.width / 2, y: at[1] - box.height / 2, width: box.width, height: box.height)
-            var spot = fit(r, in: c.pageRect)
-            notes.append("at \(Int(at[0])),\(Int(at[1]))" + (spot.origin == r.origin ? "" : " (moved onto the page)"))
+            var spot = c.clearOfChrome(fit(r, in: c.pageRect))
+            notes.append("at \(Int(at[0])),\(Int(at[1]))" + (spot.origin == r.origin ? "" : " (moved onto the page, clear of the controls)"))
             // An exact spot may sit on a figure (a label on a diagram), but never on text or their ink.
             if covers(spot, c.hardObstacles) {
-                let blockers = c.hardObstacles.map { $0.insetBy(dx: -3, dy: -3) } + c.placed
+                let blockers = c.hardObstacles.map { $0.insetBy(dx: -3, dy: -3) } + c.placed + c.chrome
                 if let free = c.occupancy?.nearestFree(size: spot.size, near: spot, in: c.pageRect.insetBy(dx: 6, dy: 6),
                                                        avoiding: blockers, maxDistance: 64)
                     ?? Placement.nearestClear(spot, avoiding: blockers, in: c.pageRect, maxDistance: 64) {
@@ -362,7 +397,7 @@ enum ActionValidator {
             a += k; cx += (p.x + q.x) * k; cy += (p.y + q.y) * k
         }
         let middle = abs(a) > 1 ? CGPoint(x: cx / (3 * a), y: cy / (3 * a)) : CGPoint(x: b.midX, y: b.midY)
-        let blockers = c.hardObstacles.map { $0.insetBy(dx: -3, dy: -3) } + c.placed
+        let blockers = c.hardObstacles.map { $0.insetBy(dx: -3, dy: -3) } + c.placed + c.chrome
         let step = max(4, min(b.width, b.height) / 24)
         var best: (CGRect, CGFloat)?
         var y = b.minY + size.height / 2
@@ -402,8 +437,8 @@ enum ActionValidator {
         if let at = input.at {
             guard at.count == 2 else { return .reject("`at` must be [x, y]: the box's top-left corner in page points") }
             let r = CGRect(x: at[0], y: at[1], width: size.width, height: size.height)
-            frame = fit(r, in: c.pageRect)
-            notes.append("at \(Int(at[0])),\(Int(at[1]))" + (frame.origin == r.origin ? "" : " (moved onto the page)"))
+            frame = c.clearOfChrome(fit(r, in: c.pageRect))
+            notes.append("at \(Int(at[0])),\(Int(at[1]))" + (frame.origin == r.origin ? "" : " (moved onto the page, clear of the controls)"))
         } else {
             var anchor = CGRect(x: c.pageSize.width / 2, y: c.pageSize.height / 2, width: 0, height: 0)
             var inFree = false
@@ -434,6 +469,9 @@ enum ActionValidator {
     // MARK: extend_page and erase_marks
 
     private static func extend(_ input: ExtendInput, _ c: inout ToolContext) throws -> ToolDecision {
+        guard c.canGrow else {
+            return .reject("this is a page of their document, so it keeps its size. Write or draw as usual: what doesn't fit goes on a blank page after it by itself")
+        }
         let h = CGFloat(min(800, max(100, input.height)))
         c.pageSize.height += h
         return ToolDecision(growPage: h, result: "ok, the page is now \(Int(c.pageSize.width))×\(Int(c.pageSize.height)) pt; "
@@ -454,6 +492,12 @@ enum ActionValidator {
     // MARK: Targets
 
     private static func resolve(_ target: PageTarget, _ c: ToolContext) throws -> ResolvedTarget {
+        if c.scratch {
+            // A blank page of its own: whatever it was near is on the page before. Fill it from the top down.
+            let body = c.pageRect.insetBy(dx: 60, dy: 0)
+            return ResolvedTarget(bounds: CGRect(x: body.minX, y: 0, width: body.width, height: c.pageRect.height),
+                                  snapped: false, note: "on the blank page", isFreeSpace: true)
+        }
         if case .point(let p) = target, !c.pageRect.insetBy(dx: -1, dy: -1).contains(p) {
             throw ToolInputError("point \(Int(p.x)),\(Int(p.y)) is off the page (\(Int(c.pageSize.width))×\(Int(c.pageSize.height)) pt)")
         }
@@ -488,6 +532,10 @@ enum ActionValidator {
         }
         if let r = nearest {
             return (r, 0, "nothing beside it; nearest clear spot \(PageMap.format(r))")
+        }
+        guard c.canGrow else {
+            c.overflowed = true
+            return (CGRect(origin: .zero, size: size), 0, "no room on this page")
         }
         let grow = max(160, size.height + 80)
         let oldHeight = c.pageSize.height

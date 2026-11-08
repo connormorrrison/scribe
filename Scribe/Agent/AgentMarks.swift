@@ -21,8 +21,46 @@ struct AgentMark: Identifiable, Codable, Equatable {
 
     var bounds: CGRect { items.reduce(CGRect.null) { $0.union($1.bounds) } }
 
-    /// Seconds it takes to draw.
-    var duration: Double { items.reduce(0) { $0 + $1.duration } }
+    /// Seconds it takes to draw, pen lifts between pieces included.
+    var duration: Double { schedule.last.map { $0.start + $0.duration } ?? 0 }
+
+    /// Seconds for the pen to lift and move to the next piece.
+    static let penLift = 0.16
+
+    /// When each piece starts and how long it takes, in seconds from the mark's start.
+    var schedule: [(start: Double, duration: Double)] {
+        var out: [(start: Double, duration: Double)] = []
+        var t = 0.0
+        for item in items {
+            out.append((t, item.duration))
+            t += item.duration + Self.penLift
+        }
+        return out
+    }
+
+    /// Where the pen starts.
+    var startPoint: CGPoint? { items.first?.tip(at: 0) }
+    /// Where the pen ends up.
+    var endPoint: CGPoint? { items.last?.tip(at: 1) }
+
+    /// Where the pen tip is `progress` (0…1) of the way through: on a piece, or moving between two.
+    func tip(at progress: Double) -> CGPoint? {
+        let plan = schedule
+        guard !plan.isEmpty else { return nil }
+        let t = min(1, max(0, progress)) * duration
+        for (i, slot) in plan.enumerated() {
+            if t <= slot.start + slot.duration {
+                if t >= slot.start {
+                    return items[i].tip(at: slot.duration > 0 ? (t - slot.start) / slot.duration : 1)
+                }
+                guard i > 0, let from = items[i - 1].tip(at: 1), let to = items[i].tip(at: 0) else { return items[i].tip(at: 0) }
+                let previousEnd = plan[i - 1].start + plan[i - 1].duration
+                let k = CGFloat(Ease.inOutSine((t - previousEnd) / Self.penLift))
+                return CGPoint(x: from.x + (to.x - from.x) * k, y: from.y + (to.y - from.y) * k)
+            }
+        }
+        return items.last?.tip(at: 1)
+    }
 }
 
 /// A piece of a mark: a stroke of the pen, or a line of handwriting.
@@ -40,9 +78,24 @@ enum AgentInk: Codable, Equatable {
     var duration: Double {
         switch self {
         case .stroke(let s):
-            if s.highlight || (s.fill != nil && !s.stroked) { return 0.3 }
-            return AgentPacing.strokeDuration(length: AgentGeometry.length(s.points) * 0.6)
+            if s.highlight { return 0.45 }
+            if s.fill != nil && !s.stroked { return 0.3 }
+            return AgentPacing.strokeDuration(length: AgentGeometry.length(s.points))
         case .text(let t): return AgentPacing.write(characters: t.text.count)
+        }
+    }
+
+    /// How much of a stroke shows at `progress` of its time: a pen eases in and out of each stroke.
+    static func penProgress(_ p: Double) -> Double { Ease.inOutSine(p) }
+
+    /// Where the pen tip is `progress` (0…1) of the way through this piece.
+    func tip(at progress: Double) -> CGPoint? {
+        switch self {
+        case .stroke(let s):
+            return AgentGeometry.trim(s.path, Self.penProgress(progress)).last
+        case .text(let t):
+            return AgentGeometry.cursorPoint(for: .writeLabel(text: t.text, at: t.center, color: AgentColor(t.color),
+                                                              size: t.size), progress: progress)
         }
     }
 }
@@ -219,14 +272,11 @@ enum AgentMarkRenderer {
             for item in mark.items { draw(item, progress: 1, in: &ctx) }
             return
         }
-        let total = max(mark.duration, 0.001)
-        var start = 0.0
-        for item in mark.items {
-            let share = item.duration / total
-            let local = share > 0 ? (progress - start) / share : 1
-            if local <= 0 { break }
+        let t = progress * mark.duration
+        for (item, slot) in zip(mark.items, mark.schedule) {
+            if t <= slot.start { break }
+            let local = slot.duration > 0 ? (t - slot.start) / slot.duration : 1
             draw(item, progress: min(1, local), in: &ctx)
-            start += share
         }
     }
 
@@ -247,7 +297,7 @@ enum AgentMarkRenderer {
                 }
             }
             guard s.stroked else { return }
-            let pts = AgentGeometry.trim(s.path, p)
+            let pts = AgentGeometry.trim(s.path, p >= 1 ? 1 : AgentInk.penProgress(p))
             guard pts.count > 1 else { return }
             var path = Path()
             path.addLines(pts)
@@ -297,5 +347,79 @@ struct AgentMarksLayer: View {
         }
         .environment(\.colorScheme, .light)
         .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Erasing
+
+/// The eraser on the agent's marks, like on the person's ink: the stroke eraser takes away each piece it touches (a
+/// stroke, a line of writing); the pixel eraser cuts strokes where it passes. Writing, fills and highlights go whole.
+enum AgentEraser {
+    /// What's left of `item` after the eraser moves from `a` to `b`, `radius` wide (page points).
+    static func erase(_ item: AgentInk, from a: CGPoint, to b: CGPoint, radius: CGFloat, pixel: Bool) -> [AgentInk] {
+        switch item {
+        case .text(let t):
+            // The letters' body, not the room Caveat's tails reach into.
+            let body = t.bounds.insetBy(dx: 2, dy: t.bounds.height * 0.15)
+            return touches(body, a, b, radius) ? [] : [item]
+        case .stroke(let s):
+            let reach = radius + s.width / 2
+            if s.fill != nil || s.highlight, s.points.count > 2 {
+                var shape = Path()
+                shape.addLines(s.points)
+                shape.closeSubpath()
+                if shape.contains(a) || shape.contains(b) { return [] }
+                if s.highlight || !s.stroked {
+                    return dense(s.path).contains { distance($0, a, b) <= reach } ? [] : [item]
+                }
+            }
+            let points = dense(s.path)
+            let hit = points.map { distance($0, a, b) <= reach }
+            guard hit.contains(true) else { return [item] }
+            guard pixel, s.fill == nil else { return [] }
+            // What's left on either side of the cut, as open strokes.
+            var runs: [[CGPoint]] = [[]]
+            for (p, gone) in zip(points, hit) {
+                if gone { if !runs[runs.count - 1].isEmpty { runs.append([]) } } else { runs[runs.count - 1].append(p) }
+            }
+            return runs.filter { $0.count > 1 && AgentGeometry.length($0) > s.width }.map { run in
+                var piece = s
+                piece.points = run
+                piece.closed = false
+                return .stroke(piece)
+            }
+        }
+    }
+
+    private static func touches(_ r: CGRect, _ a: CGPoint, _ b: CGPoint, _ radius: CGFloat) -> Bool {
+        let grown = r.insetBy(dx: -radius, dy: -radius)
+        let n = max(1, Int(hypot(b.x - a.x, b.y - a.y) / 2))
+        return (0...n).contains { k in
+            let t = CGFloat(k) / CGFloat(n)
+            return grown.contains(CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t))
+        }
+    }
+
+    /// The polyline with a point at least every 2 pt, so a cut lands where the eraser was.
+    private static func dense(_ pts: [CGPoint]) -> [CGPoint] {
+        guard var last = pts.first else { return [] }
+        var out = [last]
+        for p in pts.dropFirst() {
+            let n = max(1, Int(ceil(hypot(p.x - last.x, p.y - last.y) / 2)))
+            for k in 1...n {
+                let t = CGFloat(k) / CGFloat(n)
+                out.append(CGPoint(x: last.x + (p.x - last.x) * t, y: last.y + (p.y - last.y) * t))
+            }
+            last = p
+        }
+        return out
+    }
+
+    /// From `p` to the segment `a`–`b`.
+    static func distance(_ p: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let len2 = dx * dx + dy * dy
+        let t = len2 > 0 ? max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0
+        return hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t))
     }
 }

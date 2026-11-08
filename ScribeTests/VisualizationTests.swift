@@ -55,10 +55,10 @@ final class VisualizationTests: XCTestCase {
     }
 
     func testToolInputBecomesVisualization() throws {
-        let input: JSONValue = ["title": " Orbits ", "html": "<canvas></canvas>", "caption": "Drag the planet.", "height": 900]
+        let input: JSONValue = ["title": " Orbits ", "html": "<canvas></canvas>", "height": 900]
         let v = try VisualizationTool.visualization(from: input).get()
         XCTAssertEqual(v.title, "Orbits")
-        XCTAssertEqual(v.caption, "Drag the planet.")
+        XCTAssertNil(v.caption)
         XCTAssertEqual(v.height, Visualization.heights.upperBound)
         XCTAssertThrowsError(try VisualizationTool.visualization(from: ["title": "No page"]).get())
     }
@@ -87,6 +87,25 @@ final class VisualizationTests: XCTestCase {
         XCTAssertNil(model.closedVisualization)
     }
 
+    @MainActor
+    func testTuckedAwayCardsStayAwayWhenTheNoteOpensAgain() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vis-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = CanvasStore(directory: root)
+        let document = store.createNote(title: "Cards", in: nil)
+        let model = CanvasModel(store: store, document: document)
+        model.addVisualization(Visualization(title: "A", html: "<p>A</p>"))
+        model.showsVisualizations = false
+        model.undo() // Undoing the card doesn't bring the cards back out.
+        XCTAssertFalse(model.showsVisualizations)
+        model.redo()
+        model.saveNow()
+        XCTAssertFalse(CanvasModel(store: CanvasStore(directory: root), document: document).showsVisualizations)
+        model.showsVisualizations = true
+        model.saveNow()
+        XCTAssertTrue(CanvasModel(store: CanvasStore(directory: root), document: document).showsVisualizations)
+    }
+
     // MARK: The sandbox, for real
 
     @MainActor
@@ -100,6 +119,28 @@ final class VisualizationTests: XCTestCase {
         v.label('6 faces', [0, 1.3, 0]);
         v.onFrame(dt => { cube.rotation.x += dt; });
         Card.readout('faces: 6');
+        </script>
+        """
+        let problem = await WebCardProbe.check(html, timeout: 20)
+        XCTAssertNil(problem)
+    }
+
+    @MainActor
+    func testKitForcesOneFontAndPausesTheClock() async {
+        let html = """
+        <script>
+        const s = Card.stage();
+        s.ctx.font = 'bold italic 20px "Times New Roman", serif';
+        if (!/ui-rounded/.test(s.ctx.font)) throw new Error('canvas font is ' + s.ctx.font);
+        if (/bold|700/.test(s.ctx.font)) throw new Error('canvas weight is ' + s.ctx.font);
+        const family = getComputedStyle(document.body).fontFamily;
+        if (!/ui-rounded/.test(family)) throw new Error('body font is ' + family);
+        Card.setPaused(true);
+        const t0 = performance.now(), end = Date.now() + 30;
+        let spin = 0; while (spin < 5e6) spin++;
+        if (performance.now() !== t0) throw new Error('the clock ran while paused');
+        Card.setPaused(false);
+        s.ctx.fillStyle = '#fff'; s.ctx.fillRect(0, 0, 40, 40);
         </script>
         """
         let problem = await WebCardProbe.check(html, timeout: 20)

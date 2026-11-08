@@ -157,6 +157,8 @@ struct NoteContent: Codable, Equatable {
     var conversation: [ConversationTurn] = []
     /// The agent's visualizations, hovering over the pages in the top right, oldest first.
     var visualizations: [Visualization] = []
+    /// The person tucked the visualizations away; they stay tucked away the next time the note opens.
+    var hidesVisualizations = false
 }
 
 extension NoteContent {
@@ -168,6 +170,7 @@ extension NoteContent {
         history = try c.decodeIfPresent([HistoryEntry].self, forKey: .history) ?? []
         conversation = try c.decodeIfPresent([ConversationTurn].self, forKey: .conversation) ?? []
         visualizations = try c.decodeIfPresent([Visualization].self, forKey: .visualizations) ?? []
+        hidesVisualizations = try c.decodeIfPresent(Bool.self, forKey: .hidesVisualizations) ?? false
     }
 }
 
@@ -243,6 +246,39 @@ struct NoteFile {
         guard let directory,
               let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return }
         for name in names where name.hasSuffix(".jpg") && !used.contains(name) {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        }
+    }
+
+    // MARK: Visualization pictures
+
+    private static let visualizationPrefix = "visualization-"
+
+    /// A picture of a visualization's page soon after it starts, for the library's thumbnails.
+    func visualizationImageURL(_ id: UUID) -> URL? {
+        directory?.appendingPathComponent("\(Self.visualizationPrefix)\(id.uuidString).png")
+    }
+
+    func visualizationImage(_ id: UUID) -> UIImage? {
+        visualizationImageURL(id).flatMap { UIImage(contentsOfFile: $0.path) }
+    }
+
+    func saveVisualizationImage(_ data: Data, for id: UUID) {
+        guard let directory, let url = visualizationImageURL(id) else { return }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            StoredFile.log.error("Couldn't save visualization picture: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Deletes pictures of visualizations the note no longer has. Runs when a note opens, like `removeImages`.
+    func removeVisualizationImages(notIn used: Set<UUID>) {
+        guard let directory,
+              let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return }
+        let keep = Set(used.compactMap { visualizationImageURL($0)?.lastPathComponent })
+        for name in names where name.hasPrefix(Self.visualizationPrefix) && name.hasSuffix(".png") && !keep.contains(name) {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
         }
     }

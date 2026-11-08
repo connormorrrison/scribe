@@ -41,9 +41,11 @@ enum PDFPages {
         guard let page = PDFDocument(url: url)?.page(at: index) else { return }
         let size = displaySize(of: page)
         guard size.width > 0, size.height > 0 else { return }
+        // At its own shape, from the top (a page that was once made taller doesn't stretch it).
+        let height = rect.width * size.height / size.width
         context.saveGState()
-        context.translateBy(x: rect.minX, y: rect.maxY)
-        context.scaleBy(x: rect.width / size.width, y: -rect.height / size.height)
+        context.translateBy(x: rect.minX, y: rect.minY + height)
+        context.scaleBy(x: rect.width / size.width, y: -height / size.height)
         page.draw(with: .cropBox, to: context)
         context.restoreGState()
     }
@@ -106,8 +108,10 @@ struct PDFPageView: View {
         // One image pixel per screen pixel.
         let pixelWidth = (width * displayScale).rounded()
         Color.white
-            .overlay {
-                if let image { Image(uiImage: image).resizable().interpolation(.high) }
+            .overlay(alignment: .top) {
+                // At its own shape, from the top: a page that was once made taller never stretches the PDF away from
+                // the ink on it.
+                if let image { Image(uiImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fit) }
             }
             .task(id: "\(page)-\(Int(pixelWidth))") {
                 if let cached = PDFPageImages.shared.cached(url: url, page: page, pixelWidth: pixelWidth) {

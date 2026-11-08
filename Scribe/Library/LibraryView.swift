@@ -77,15 +77,9 @@ struct LibraryView: View {
                     .tag(SidebarItem.recents)
 
                 DisclosureGroup(isExpanded: $documentsExpanded) {
-                    ForEach(store.folders) { folder in
-                        folderRow(folder)
-                    }
-                    ForEach(store.documents(inFolder: nil)) { doc in
-                        noteRow(doc)
-                    }
+                    SidebarFolderContents(store: store, folderID: nil, expanded: $expandedFolders)
                 } label: {
-                    Label("Documents", systemImage: "doc.on.doc")
-                        .dropDestination(for: String.self) { ids, _ in move(ids, to: nil) }
+                    SidebarDropLabel(title: "Documents", symbol: "doc.on.doc", folderID: nil, store: store)
                 }
                 .tag(SidebarItem.documents)
 
@@ -103,32 +97,11 @@ struct LibraryView: View {
         .roundedTitle("Scribe", inline: true)
     }
 
-    /// A folder that opens to show its notes.
-    private func folderRow(_ folder: CanvasFolder) -> some View {
-        DisclosureGroup(isExpanded: Binding(get: { expandedFolders.contains(folder.id) },
-                                            set: { if $0 { expandedFolders.insert(folder.id) } else { expandedFolders.remove(folder.id) } })) {
-            ForEach(store.documents(in: folder)) { doc in
-                noteRow(doc)
-            }
-        } label: {
-            Label(folder.name, systemImage: "folder")
-                .dropDestination(for: String.self) { ids, _ in move(ids, to: folder.id) }
-        }
-        .tag(SidebarItem.folder(folder.id))
-    }
-
-    private func noteRow(_ doc: CanvasDocument) -> some View {
-        Label(doc.title, systemImage: doc.kind == .pdf ? "doc.richtext" : "doc.text")
-            .lineLimit(1)
-            .tag(SidebarItem.note(doc.id))
-            .draggable(doc.id.uuidString)
-    }
-
     @ViewBuilder
     private func screen(for item: SidebarItem) -> some View {
         switch item {
         case .recents: RecentsView(store: store)
-        case .documents: DocumentsView(store: store)
+        case .documents: FolderView(store: store, folderID: nil)
         case .folder(let id): FolderView(store: store, folderID: id).id(id)
         case .note(let id): DocumentView(store: store, documentID: id) { self.item = .documents }.id(id)
         case .trash: TrashView(store: store)
@@ -144,18 +117,69 @@ struct LibraryView: View {
         }
     }
 
-    // MARK: Dropping notes onto sidebar rows
+    // MARK: Dropping notes onto the Trash
 
-    private func move(_ ids: [String], to folderID: UUID?) -> Bool {
-        let uuids = ids.compactMap(UUID.init(uuidString:))
-        withAnimation { uuids.forEach { store.move(documentID: $0, to: folderID) } }
-        return !uuids.isEmpty
-    }
-
-    private func trash(_ ids: [String]) -> Bool {
-        let docs = ids.compactMap(UUID.init(uuidString:)).compactMap(store.document)
+    /// Notes dropped on the Trash go there. Folders don't: deleting one is a choice made from its menu.
+    private func trash(_ payloads: [String]) -> Bool {
+        let docs = LibraryDrag.ids(payloads).compactMap(store.document)
         withAnimation { docs.forEach(store.moveToTrash) }
         return !docs.isEmpty
+    }
+}
+
+/// The folders and notes inside one folder (or the top of Documents) in the sidebar, each folder opening to show
+/// its own contents, as deep as they go.
+private struct SidebarFolderContents: View {
+    let store: CanvasStore
+    let folderID: UUID?
+    @Binding var expanded: Set<UUID>
+
+    var body: some View {
+        ForEach(store.folders(in: folderID)) { folder in
+            DisclosureGroup(isExpanded: Binding(get: { expanded.contains(folder.id) },
+                                                set: { if $0 { expanded.insert(folder.id) } else { expanded.remove(folder.id) } })) {
+                // A view of its own, so the tree can recurse.
+                AnyView(SidebarFolderContents(store: store, folderID: folder.id, expanded: $expanded))
+            } label: {
+                SidebarDropLabel(title: folder.name, symbol: "folder", folderID: folder.id, store: store) {
+                    expanded.insert(folder.id)
+                }
+                .draggable(LibraryDrag.payload([folder.id]))
+            }
+            .tag(SidebarItem.folder(folder.id))
+        }
+        ForEach(store.documents(inFolder: folderID)) { doc in
+            Label(doc.title, systemImage: doc.kind == .pdf ? "doc.richtext" : "doc.text")
+                .lineLimit(1)
+                .tag(SidebarItem.note(doc.id))
+                .draggable(LibraryDrag.payload([doc.id]))
+        }
+    }
+}
+
+/// A sidebar row that takes notes and folders dropped onto it, tinted while something hovers over it.
+private struct SidebarDropLabel: View {
+    let title: String
+    let symbol: String
+    let folderID: UUID?
+    let store: CanvasStore
+    var onDrop: () -> Void = {}
+    @State private var targeted = false
+
+    var body: some View {
+        Label(title, systemImage: targeted ? "\(symbol == "folder" ? "folder.fill" : symbol)" : symbol)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .background {
+                if targeted {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.18))
+                        .padding(.horizontal, -8)
+                        .padding(.vertical, -4)
+                }
+            }
+            .libraryDropTarget(folderID, store: store, targeted: $targeted, onMove: onDrop)
     }
 }
 
@@ -180,7 +204,7 @@ struct SearchResultsView: View {
                 LibraryGrid {
                     ForEach(results) { doc in
                         NoteLink(document: doc, store: store, prompt: $prompt,
-                                 caption: doc.folderID.flatMap(store.folder)?.name ?? "Documents")
+                                 caption: store.locationName(doc.folderID))
                     }
                 }
             }

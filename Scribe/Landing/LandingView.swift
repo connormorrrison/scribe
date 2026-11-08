@@ -55,12 +55,12 @@ struct LandingView: View {
 
         return ZStack(alignment: .topLeading) {
             // Cards
-            LandingCard(title: "Atom", detail: "3D", rect: layout.atomCard, s: s) {
+            LandingCard(title: "Atom", rect: layout.atomCard, s: s) {
                 AtomArt(time: clock.cardTime, s: s)
             }
             .rise(clock.progress(0.3, 0.9), distance: 14 * s, rect: layout.atomCard, s: s)
 
-            LandingCard(title: "Tangent line", detail: TangentArt.slopeLabel(time: clock.cardTime),
+            LandingCard(title: "Tangent line", readout: TangentArt.readout(time: clock.cardTime),
                         rect: layout.tangentCard, s: s) {
                 TangentArt(time: clock.cardTime, s: s)
             }
@@ -230,7 +230,10 @@ struct LandingLayout {
     /// The window's safe area, for `pagePoints`.
     var safe = EdgeInsets()
 
-    static let headerHeight: CGFloat = 36
+    /// The cards' title bar: the real card's 48 pt, at the landing cards' scale.
+    static let headerHeight: CGFloat = 38
+    /// Both cards are the same size, in the proportions of a visualization card.
+    static let cardSize = CGSize(width: 270, height: 230)
 
     init(screen: CGSize, safe: EdgeInsets = EdgeInsets()) {
         self.screen = screen
@@ -248,9 +251,10 @@ struct LandingLayout {
         return s / fit
     }
 
-    var atomCard: CGRect { CGRect(x: 48, y: 70, width: 240, height: 230) }
+    var atomCard: CGRect { CGRect(origin: CGPoint(x: 48, y: 70), size: Self.cardSize) }
     var tangentCard: CGRect {
-        CGRect(x: design.width - 48 - 300, y: design.height - 104 - 200, width: 300, height: 200)
+        CGRect(origin: CGPoint(x: design.width - 48 - Self.cardSize.width,
+                               y: design.height - 104 - Self.cardSize.height), size: Self.cardSize)
     }
     var nucleus: CGPoint {
         CGPoint(x: atomCard.midX, y: atomCard.minY + Self.headerHeight + (atomCard.height - Self.headerHeight) / 2)
@@ -655,7 +659,7 @@ struct InkPlan {
         let tangent = S.dense([CGPoint(x: touch.x - 48, y: touch.y - 48 * m),
                                CGPoint(x: touch.x + 48, y: touch.y + 48 * m)])
         let card = layout.tangentCard
-        let from = op(230, 200), to = CGPoint(x: card.minX + 170, y: card.minY - 14)
+        let from = op(230, 200), to = CGPoint(x: card.minX + 90, y: card.minY - 14) // Its tag clear of the card's buttons.
         let drop = to.y - from.y
         let c1 = CGPoint(x: from.x + 60, y: from.y + drop * 0.35)
         let c2 = CGPoint(x: to.x + 60, y: to.y - drop * 0.3)
@@ -788,7 +792,7 @@ private struct InkLayer: View {
 }
 
 /// The filled Lucide pointer in its colour, with a 1.5 pt white outline and a soft shadow.
-private struct CursorGlyph: View {
+struct CursorGlyph: View {
     let color: Color
     let size: CGFloat
 
@@ -832,33 +836,55 @@ private struct OpenButton: View {
 
 // MARK: - Cards
 
+/// A sample visualization card, made like the real ones (`VisualizationCard`) at a smaller scale: the title and the
+/// Pause, More and Close buttons on top, the picture, and a grey readout under it when something changes.
 private struct LandingCard<Art: View>: View {
     let title: String
-    let detail: String
+    var readout: String? = nil
     let rect: CGRect
     let s: CGFloat
     @ViewBuilder let art: Art
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 0) {
                 Text(title)
                     .font(.system(size: 13 * s, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
+                    .lineLimit(1)
                 Spacer(minLength: 8 * s)
-                Text(detail)
-                    .font(.system(size: 13 * s, weight: .regular, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.7))
+                HStack(spacing: 6 * s) {
+                    ForEach(["pause.fill", "ellipsis", "xmark"], id: \.self) { symbol in
+                        Image(systemName: symbol)
+                            .font(.system(size: 10 * s, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 24 * s, height: 24 * s)
+                            .background(.white.opacity(0.12), in: Circle())
+                    }
+                }
             }
-            .padding(.horizontal, 14 * s)
+            .padding(.leading, 14 * s)
+            .padding(.trailing, 8 * s)
             .frame(height: LandingLayout.headerHeight * s)
 
             art.frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if let readout {
+                Text(readout)
+                    .font(.system(size: 11 * s, weight: .regular, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14 * s)
+                    .padding(.top, 4 * s)
+                    .padding(.bottom, 10 * s)
+            }
         }
+        .padding(.bottom, readout == nil ? 6 * s : 0)
         .frame(width: rect.width * s, height: rect.height * s)
         .background(Landing.card, in: RoundedRectangle(cornerRadius: 18 * s, style: .continuous))
-        .shadow(color: .black.opacity(0.22), radius: 20 * s, x: 0, y: 14 * s)
+        .shadow(color: .black.opacity(0.22), radius: 16 * s, x: 0, y: 10 * s)
         .accessibilityHidden(true)
     }
 }
@@ -976,9 +1002,10 @@ struct TangentArt: View {
     static func f(_ x: Double) -> Double { x * x * x / 3 - x }
     static func x0(time: Double) -> Double { 2.1 * sin(0.9 * time) }
 
-    static func slopeLabel(time: Double) -> String {
+    /// The live readout, written the way the agent's are: "Slope 0.25 at x = 1.12".
+    static func readout(time: Double) -> String {
         let x = x0(time: time)
-        return String(format: "slope %+.2f", x * x - 1).replacingOccurrences(of: "-", with: "−")
+        return String(format: "Slope %.2f at x = %.2f", x * x - 1, x).replacingOccurrences(of: "-", with: "−")
     }
 
     var body: some View {

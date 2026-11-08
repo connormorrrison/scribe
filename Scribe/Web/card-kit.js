@@ -2,7 +2,7 @@
  * The card kit: injected into every visualization page at document start, before the page's own scripts.
  * Global `Card`. Keep in step with the description the agent gets (VisualizationTool.cardKit).
  *
- * Talks to the app only through window.webkit.messageHandlers.card: ready, error, focus, resize, readout.
+ * Talks to the app only through window.webkit.messageHandlers.card: ready, error, focus, resize, paused.
  */
 (function () {
   'use strict';
@@ -34,6 +34,53 @@
     requestAnimationFrame(function () { requestAnimationFrame(function () { post({ type: 'ready' }); }); });
   });
 
+  // MARK: Pausing
+
+  // The app's Pause button freezes the page's clock: requestAnimationFrame keeps running (so dragging and sliders
+  // still redraw), but its timestamps, performance.now() and Date.now() stand still, so anything animated from time
+  // stops where it is. Timers wait, and CSS animations pause.
+  var paused = false, pausedAt = 0, pausedTotal = 0;
+  var realNow = performance.now.bind(performance), realDateNow = Date.now.bind(Date);
+  var realRAF = window.requestAnimationFrame.bind(window);
+  var realSetTimeout = window.setTimeout.bind(window), realSetInterval = window.setInterval.bind(window);
+  function clockNow() { return (paused ? pausedAt : realNow()) - pausedTotal; }
+  try { performance.now = clockNow; } catch (e) {}
+  Date.now = function () { return realDateNow() - pausedTotal - (paused ? realNow() - pausedAt : 0); };
+  window.requestAnimationFrame = function (fn) { return realRAF(function () { fn(clockNow()); }); };
+  function whenRunning(fn, args) {
+    return function run() {
+      if (paused) { realSetTimeout(run, 100); return; }
+      if (typeof fn === 'function') fn.apply(window, args);
+    };
+  }
+  window.setTimeout = function (fn, ms) {
+    return realSetTimeout(whenRunning(fn, Array.prototype.slice.call(arguments, 2)), ms);
+  };
+  window.setInterval = function (fn, ms) {
+    var args = Array.prototype.slice.call(arguments, 2);
+    return realSetInterval(function () { if (!paused && typeof fn === 'function') fn.apply(window, args); }, ms);
+  };
+
+  // MARK: One font
+
+  // Everything on the card uses the app's one font, SF Pro Rounded, in regular or semibold. CSS forces it on every
+  // element; canvas text gets it here, whatever family the page asks for.
+  var FONT = 'ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif';
+  function roundedFont(spec) {
+    var m = /^(.*?)(\d*\.?\d+(?:px|pt|em|rem|%))(\s*\/\s*\S+)?\s+.+$/.exec(String(spec).trim());
+    if (!m) return spec;
+    var lead = m[1].replace(/\b(bold|bolder|[6-9]00)\b/g, '600').replace(/\b(lighter|[1-3]00)\b/g, '400');
+    return lead + m[2] + ' ' + FONT;
+  }
+  try {
+    var fontProp = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'font');
+    Object.defineProperty(CanvasRenderingContext2D.prototype, 'font', {
+      configurable: true, enumerable: fontProp.enumerable,
+      get: function () { return fontProp.get.call(this); },
+      set: function (v) { fontProp.set.call(this, roundedFont(v)); }
+    });
+  } catch (e) {}
+
   function root() { return document.body || document.documentElement; }
   function clamp(x, a, b) { return Math.min(b, Math.max(a, x)); }
 
@@ -47,13 +94,34 @@
     text: 'rgba(255,255,255,0.82)', label: 'rgba(255,255,255,0.72)'
   };
 
+  /** A canvas font in the app's one font: Card.font(14) or Card.font(14, 600). */
+  Card.font = function (size, weight) { return (weight >= 600 ? '600 ' : '') + (size || 14) + 'px ' + FONT; };
+
+  /** Pauses or resumes the whole page (the app's Pause button calls this). */
+  var resumeTimelines = [];
+  Card.setPaused = function (p) {
+    p = !!p;
+    if (p === paused) return;
+    if (p) {
+      pausedAt = realNow(); paused = true;
+      resumeTimelines = timelines.filter(function (t) { return t.playing; });
+      resumeTimelines.forEach(function (t) { t.pause(); });
+      try { document.getAnimations().forEach(function (a) { a.pause(); }); } catch (e) {}
+    } else {
+      pausedTotal += realNow() - pausedAt; paused = false;
+      resumeTimelines.forEach(function (t) { t.play(); });
+      resumeTimelines = [];
+      try { document.getAnimations().forEach(function (a) { a.play(); }); } catch (e) {}
+    }
+  };
+  Object.defineProperty(Card, 'paused', { get: function () { return paused; } });
+
   Card.ease = function (t) { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
   Card.lerp = function (a, b, t) { return a + (b - a) * t; };
   Card.clamp = clamp;
 
-  Card.readout = function (html) { post({ type: 'readout', text: String(html) }); };
   Card.focus = function (id) { post({ type: 'focus', part: String(id) }); };
-  /** Asks the app for a taller or shorter card (points, 220–560). */
+  /** Asks the app for a taller or shorter card (points, 220–440). */
   Card.resize = function (height) { post({ type: 'resize', height: Number(height) }); };
 
   // MARK: Resizing
@@ -127,6 +195,28 @@
     }
     return dock;
   }
+
+  /**
+   * The readout: a line or two of live values under the drawing, above the controls. Plain text; "\n" (or <br>)
+   * starts a second line. An empty string hides it.
+   */
+  var readoutRow = null;
+  Card.readout = function (text) {
+    var t = String(text == null ? '' : text).replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').trim();
+    if (!readoutRow) {
+      if (!t) return;
+      readoutRow = document.createElement('div');
+      readoutRow.id = 'card-readout';
+      var d = ensureDock();
+      d.insertBefore(readoutRow, d.firstChild);
+    }
+    if (readoutRow.textContent === t) return;
+    var before = readoutRow.offsetHeight;
+    readoutRow.textContent = t;
+    readoutRow.style.display = t ? '' : 'none';
+    if (readoutRow.offsetHeight !== before) layoutChanged();
+  };
 
   /** A slider in the dock: {label, min, max, value, step, onInput(v), format(v)?}. Returns {value, set(v)}. */
   Card.slider = function (o) {
@@ -299,13 +389,19 @@
     }
     var api = {
       get t() { return t; },
+      get playing() { return playing; },
       play: function () { if (t >= 1) t = 0; playing = true; last = null; render(); },
       pause: function () { playing = false; last = null; render(); },
       seek: function (v) { t = clamp(v, 0, 1); render(); }
     };
     timelines.push(api);
 
-    button.addEventListener('click', function () { if (playing) api.pause(); else api.play(); });
+    button.addEventListener('click', function () {
+      if (playing) { api.pause(); return; }
+      // Playing the timeline while the whole card is paused resumes the card too.
+      if (paused) { Card.setPaused(false); post({ type: 'paused', value: false }); }
+      api.play();
+    });
     var dragging = false;
     function scrub(e) {
       var r = track.getBoundingClientRect();

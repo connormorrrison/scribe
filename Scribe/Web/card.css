@@ -17,14 +17,16 @@
   --text: rgba(255, 255, 255, 0.82);
   --label: rgba(255, 255, 255, 0.72);
   --dock: 0px;
+  --font: ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif;
   color-scheme: dark;
 }
-@font-face { font-family: "STIX Two Text"; src: url("app://lib/STIXTwoText.ttf"); font-style: normal; font-weight: 400 700; }
-@font-face { font-family: "STIX Two Text"; src: url("app://lib/STIXTwoText-Italic.ttf"); font-style: italic; font-weight: 400 700; }
+/* One font for everything on the card, whatever the page sets: SF Pro Rounded, regular or semibold. */
+*, *::before, *::after, svg text, svg tspan { font-family: var(--font) !important; }
+b, strong, th, h1, h2, h3, h4, h5, h6 { font-weight: 600 !important; }
 html, body {
   margin: 0; padding: 0; width: 100%; height: 100%;
   background: var(--stage); color: #FFFFFF;
-  font: 15px/1.35 -apple-system, system-ui, sans-serif;
+  font: 15px/1.35 var(--font);
   overflow: hidden;
   -webkit-user-select: none; user-select: none;
   -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none;
@@ -32,9 +34,8 @@ html, body {
 }
 body { box-sizing: border-box; padding-bottom: var(--dock); }
 canvas, svg { display: block; }
-.math { font-family: "STIX Two Text", "Times New Roman", serif; }
+.math { font-variant-numeric: tabular-nums; }
 .math i, i.math { font-style: italic; }
-.readout { font-family: "STIX Two Text", serif; color: var(--text); font-variant-numeric: tabular-nums; }
 .note { color: var(--label); font-size: 13px; }
 
 /* Labels Card.three() keeps pinned to points in the 3D scene. */
@@ -44,17 +45,22 @@ canvas, svg { display: block; }
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
-/* The dock: sliders, then the timeline. Built by Card.slider / Card.timeline. */
+/* The dock: the readout, sliders and buttons, then the timeline. Built by Card.readout / .slider / .timeline. */
 #card-dock { position: fixed; left: 0; right: 0; bottom: 0; background: var(--stage); z-index: 10; }
+#card-readout {
+  padding: 8px 16px 6px; color: rgba(255, 255, 255, 0.6);
+  font: 400 13px/1.35 var(--font); font-variant-numeric: tabular-nums;
+  white-space: pre-line; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
 .card-slider { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 20px; }
-.card-slider label { font-family: "STIX Two Text", serif; font-style: italic; font-size: 17px; min-width: 14px; }
+.card-slider label { font-size: 14px; color: var(--label); min-width: 14px; }
 .card-slider input[type=range] { flex: 1; accent-color: var(--curve); }
-.card-slider output { font-family: "STIX Two Text", serif; color: var(--text); width: 48px; text-align: right; font-variant-numeric: tabular-nums; }
+.card-slider output { font-size: 14px; color: var(--text); width: 48px; text-align: right; font-variant-numeric: tabular-nums; }
 .card-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 16px; }
 .card-buttons label { font-size: 13px; color: var(--label); margin-right: 4px; }
 .card-button {
   min-height: 36px; padding: 0 14px; border-radius: 18px; border: 0;
-  background: rgba(255, 255, 255, 0.10); color: var(--text); font: 600 13px -apple-system, system-ui, sans-serif;
+  background: rgba(255, 255, 255, 0.10); color: var(--text); font: 600 13px var(--font);
 }
 .card-button.on { background: var(--curve); color: var(--stage); }
 .card-toggle.on { background: rgba(88, 196, 221, 0.25); color: #FFFFFF; box-shadow: inset 0 0 0 1.5px var(--curve); }
