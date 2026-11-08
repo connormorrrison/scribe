@@ -29,9 +29,7 @@ final class VoiceIO: NSObject, AVAudioPlayerDelegate {
     /// recording (an m4a the caller deletes), or nil if nothing was said or it was cancelled.
     func record() async throws -> URL? {
         finishRequested = false
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-        try session.setActive(true)
+        try await Self.activateSession()
 
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("speech-\(UUID().uuidString).m4a")
         let recorder = try AVAudioRecorder(url: url, settings: [
@@ -81,9 +79,7 @@ final class VoiceIO: NSObject, AVAudioPlayerDelegate {
 
     /// Plays `audio` to the end, or until the task is cancelled.
     func play(_ audio: Data) async throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-        try session.setActive(true)
+        try await Self.activateSession()
 
         let player = try AVAudioPlayer(data: audio)
         player.delegate = self
@@ -106,9 +102,34 @@ final class VoiceIO: NSObject, AVAudioPlayerDelegate {
         playback = nil
     }
 
-    /// Lets other apps' audio carry on.
+    /// Lets other apps' audio carry on. Returns straight away; the session ends in the background.
     func deactivate() {
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        Self.sessionQueue.async {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+    }
+
+    // MARK: Audio session
+
+    /// Starting and ending the audio session can block for a noticeable moment (ending it waits on other apps), so
+    /// it happens off the main thread. One serial queue keeps the calls in order: an ending queued after one turn
+    /// can't land after the next turn has started.
+    private static let sessionQueue = DispatchQueue(label: "com.connormorrison.Scribe.audio-session",
+                                                    qos: .userInitiated)
+
+    private static func activateSession() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            sessionQueue.async {
+                do {
+                    let session = AVAudioSession.sharedInstance()
+                    try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+                    try session.setActive(true)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
