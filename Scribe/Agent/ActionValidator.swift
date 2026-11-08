@@ -539,6 +539,17 @@ enum ActionValidator {
         if case .point(let p) = target, !c.pageRect.insetBy(dx: -1, dy: -1).contains(p) {
             throw ToolInputError("point \(Int(p.x)),\(Int(p.y)) is off the page (\(Int(c.pageSize.width))×\(Int(c.pageSize.height)) pt)")
         }
+        // One of the agent's own marks, including those drawn earlier this turn (the map is from before the turn):
+        // "below am_3" stacks the next step under it.
+        if case .id(let id, let match) = target, id.hasPrefix("am_"), let n = Int(id.dropFirst(3)), n >= 1,
+           n <= c.marks.count {
+            let mark = c.marks[n - 1]
+            let written = mark.items.compactMap { if case .text(let t) = $0 { t } else { nil } }
+            if let match, !match.isEmpty, let part = AgentGeometry.inkBox(of: match, in: written) {
+                return ResolvedTarget(bounds: part, objectID: id, snapped: false, note: "\(id) + “\(match)”")
+            }
+            return ResolvedTarget(bounds: mark.bounds, objectID: id, snapped: false, note: id)
+        }
         guard let r = c.map.resolve(target: target, pageSize: c.pageSize) else {
             if case .id(let id, _) = target {
                 if id.hasPrefix("am_") { throw ToolInputError("`\(id)` is one of your marks; target what it marks instead") }

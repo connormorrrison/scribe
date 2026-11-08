@@ -188,8 +188,8 @@ struct InkCanvas: UIViewRepresentable {
         pinch.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         pinch.delegate = context.coordinator
         canvas.addGestureRecognizer(pinch)
-        let doubleTap = UITapGestureRecognizer(target: context.coordinator,
-                                               action: #selector(Coordinator.doubleTapped(_:)))
+        let doubleTap = context.coordinator.doubleTap
+        doubleTap.addTarget(context.coordinator, action: #selector(Coordinator.doubleTapped(_:)))
         doubleTap.numberOfTapsRequired = 2
         doubleTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         doubleTap.cancelsTouchesInView = false
@@ -228,6 +228,9 @@ struct InkCanvas: UIViewRepresentable {
         if !coordinator.isCurrent(tool) { canvas.tool = tool }
         let policy: PKCanvasViewDrawingPolicy = drawWithFinger ? .anyInput : .pencilOnly
         if canvas.drawingPolicy != policy { canvas.drawingPolicy = policy }
+        // With finger drawing, two quick dots of ink (an i, a colon) are a double-tap, which zoomed the page back out
+        // mid-writing. Pinch still zooms.
+        if coordinator.doubleTap.isEnabled == drawWithFinger { coordinator.doubleTap.isEnabled = !drawWithFinger }
 
         // With the lasso, the loop is drawn by `LassoTracker`; PencilKit's own lasso can't tell us what it selected.
         let lassoing = model.palette.tool == .lasso
@@ -253,6 +256,7 @@ struct InkCanvas: UIViewRepresentable {
         var zoom: PageZoomGestures?
         let lasso = MainActor.assumeIsolated { LassoTracker() }
         let markEraser = MainActor.assumeIsolated { TouchTracker() }
+        let doubleTap = MainActor.assumeIsolated { UITapGestureRecognizer() }
         private var lastErasePoint: CGPoint?
         private var loading = false
         /// What `load` last put on the canvas, until the person changes it. PencilKit can report a drawing it was

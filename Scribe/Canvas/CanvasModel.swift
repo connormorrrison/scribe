@@ -1200,6 +1200,8 @@ final class CanvasModel {
 
         var said: [String] = []
         var shown = 0
+        /// The turn ended with a visualization and nothing to say.
+        var visualOnly = false
         var fixesLeft = 1
         for _ in 0..<6 {
             let turn = try await claude.sendWithTools(
@@ -1226,6 +1228,7 @@ final class CanvasModel {
             }
             messages.append(["role": "assistant", "content": .array(turn.content.filter { $0 != .null })])
             var results: [JSONValue] = []
+            var failed = false
             for call in calls {
                 let outcome: (result: String, isError: Bool)
                 if call.name == VisualizationTool.name {
@@ -1240,17 +1243,30 @@ final class CanvasModel {
                 } else {
                     outcome = ("There's no tool called \(call.name).", true)
                 }
+                if outcome.isError { failed = true }
                 results.append(["type": "tool_result", "tool_use_id": .string(call.id),
                                 "content": .string(outcome.result), "is_error": .bool(outcome.isError)])
             }
             withAnimation(.snappy) { draftingVisualization = false }
             try Task.checkCancellation()
+            // A visualization speaks for itself: once it's up, a typed or lassoed request is done, with no words after.
+            if !speak, shown > 0, !failed, calls.allSatisfy({ $0.name == VisualizationTool.name }) {
+                visualOnly = true
+                break
+            }
             messages.append(["role": "user", "content": .array(results)])
         }
         // Done drawing: the cursor goes back into the pill before the answer.
         returnCursor()
         // Only the last thing said is the answer: text written before or between tool calls tends to be restated
         // in full once the marks are on the page, and joining them reads the same answer out twice.
+        if visualOnly || (!speak && shown > 0 && (drawing?.drawn ?? 0) == 0) {
+            // Kept in History, but no answer bubble over the page: the card is the answer.
+            let title = content.visualizations.last?.title ?? "a visualization"
+            content.conversation.append(ConversationTurn(speaker: .agent, text: "Made “\(title)”.", spoken: false))
+            changed()
+            return
+        }
         let answer = said.last ?? (shown > 0 ? "Here it is, in the top right." : "There, on your page.")
         content.conversation.append(ConversationTurn(speaker: .agent, text: answer, spoken: speak))
         changed()

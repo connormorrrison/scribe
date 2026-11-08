@@ -30,7 +30,8 @@ enum QuestionMark {
         while first > 0, strokes.count - first < 10 {
             let previous = strokes[first - 1], next = strokes[first]
             guard next.path.creationDate.timeIntervalSince(end(of: previous)) < 1.2 else { break }
-            let h = max(bounds.height, 12)
+            // Room for the gap between a ?'s hook and its dot, judged by the bigger of the two.
+            let h = max(bounds.height, previous.renderBounds.height, 12)
             guard previous.renderBounds.insetBy(dx: -h * 0.6, dy: -h * 0.4).intersects(bounds) else { break }
             bounds = bounds.union(previous.renderBounds)
             first -= 1

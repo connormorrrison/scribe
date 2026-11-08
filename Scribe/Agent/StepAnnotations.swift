@@ -151,7 +151,8 @@ extension ActionValidator {
     /// top of the other; between lines it swoops from edge to edge. `apex` is the middle of the curve and `outward`
     /// the way it bows, for a label.
     static func curvedArrow(from a: CGRect, to b: CGRect) -> (path: [CGPoint], apex: CGPoint, outward: CGPoint) {
-        let sameLine = abs(a.midY - b.midY) < max(a.height, b.height) * 0.6
+        // On one line when they overlap up and down: an exponent sits high, but it's on the line of its x.
+        let sameLine = a.maxY >= b.minY - 4 && b.maxY >= a.minY - 4
         let start: CGPoint, end: CGPoint, control: CGPoint, outward: CGPoint
         if sameLine {
             start = CGPoint(x: a.midX, y: a.minY - 4)

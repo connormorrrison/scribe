@@ -463,7 +463,9 @@ final class PageMapTests: XCTestCase {
         let missed = AgentEraser.erase(line, from: CGPoint(x: 100, y: 30), to: CGPoint(x: 120, y: 40), radius: 5, pixel: true)
         XCTAssertEqual(missed, [line])
         let words = AgentInk.text(AgentText(text: "x = 2", center: CGPoint(x: 300, y: 300), size: 24))
-        XCTAssertEqual(AgentEraser.erase(words, from: CGPoint(x: 300, y: 300), to: CGPoint(x: 302, y: 300), radius: 5, pixel: true), [])
+        // Writing loses only the letters the pixel eraser crosses: through the "=", the "x" and the "2" stay.
+        let left = AgentEraser.erase(words, from: CGPoint(x: 300, y: 300), to: CGPoint(x: 302, y: 300), radius: 5, pixel: true)
+        XCTAssertEqual(left.compactMap { if case .text(let t) = $0 { t.text } else { nil } }, ["x", "2"])
     }
 
     func testMarksAndTheirTargets() {

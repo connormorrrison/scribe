@@ -125,7 +125,7 @@ struct PDFPageView: View {
     }
 }
 
-/// A page on screen, zoomable: pinch (1x to 4x) or double-tap with fingers; pan with one finger while zoomed. The
+/// A page on screen, zoomable: pinch (1x to 4x) or double-tap with fingers (not while drawing with a finger); pan with one finger while zoomed. The
 /// Pencil always draws.
 ///
 /// A PDF page sits on the desk, shown whole between the top and bottom controls. A blank page fills the screen edge
