@@ -245,8 +245,7 @@ struct PageMap {
     // MARK: Snapping
 
     /// Turns whatever the agent sent into exact geometry. Nil only for an ID that doesn't exist.
-    /// `pageSize` is the page as it is now: after `extend_page` this turn it's bigger than the snapshot's, and targets
-    /// in the new space must not be pulled back to the old bottom edge.
+    /// `pageSize` is the page targets are kept on (the snapshot's by default).
     func resolve(target: PageTarget, pageSize: CGSize? = nil) -> ResolvedTarget? {
         let page = CGRect(origin: .zero, size: pageSize ?? snapshot.pageSize)
         switch target {

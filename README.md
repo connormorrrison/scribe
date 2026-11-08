@@ -7,7 +7,7 @@ and can open small interactive visualizations.
 ## Stack
 
 - Swift, SwiftUI, PencilKit, PDFKit, Vision (iPadOS 18+)
-- [Claude](https://docs.anthropic.com) (Haiku 5.5) for the agent
+- [Claude](https://docs.anthropic.com) (Sonnet 5.5) for the agent
 - [ElevenLabs](https://elevenlabs.io) for speech to text and text to speech
 - WebKit, sandboxed, for the visualizations
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) generates the Xcode project from `project.yml`

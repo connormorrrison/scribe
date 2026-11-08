@@ -9,7 +9,7 @@ final class ClaudeReplyTests: XCTestCase {
 
     func testAnswerSkipsThinking() throws {
         let r = try reply("""
-        {"model":"claude-haiku-5-5","stop_reason":"end_turn","content":[
+        {"model":"claude-sonnet-5-5","stop_reason":"end_turn","content":[
           {"type":"thinking","thinking":"","signature":"abc"},
           {"type":"text","text":"  Hello there. "}]}
         """)
@@ -17,13 +17,13 @@ final class ClaudeReplyTests: XCTestCase {
     }
 
     func testRefusalIsAnError() throws {
-        let r = try reply(#"{"model":"claude-haiku-5-5","stop_reason":"refusal","content":[]}"#)
+        let r = try reply(#"{"model":"claude-sonnet-5-5","stop_reason":"refusal","content":[]}"#)
         XCTAssertThrowsError(try r.answer()) { XCTAssertEqual($0 as? ClaudeClient.ReplyError, .declined) }
     }
 
     func testCutOffDuringThinkingIsAnError() throws {
         let r = try reply("""
-        {"model":"claude-haiku-5-5","stop_reason":"max_tokens","content":[
+        {"model":"claude-sonnet-5-5","stop_reason":"max_tokens","content":[
           {"type":"thinking","thinking":"","signature":"abc"}]}
         """)
         XCTAssertThrowsError(try r.answer()) { XCTAssertEqual($0 as? ClaudeClient.ReplyError, .cutOff) }

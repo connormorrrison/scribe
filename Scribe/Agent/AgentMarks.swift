@@ -1,3 +1,4 @@
+import CoreText
 import SwiftUI
 import UIKit
 
@@ -352,8 +353,9 @@ struct AgentMarksLayer: View {
 
 // MARK: - Erasing
 
-/// The eraser on the agent's marks, like on the person's ink: the stroke eraser takes away each piece it touches (a
-/// stroke, a line of writing); the pixel eraser cuts strokes where it passes. Writing, fills and highlights go whole.
+/// The eraser on the agent's marks, like on the person's ink: the stroke eraser takes away each stroke it touches,
+/// and each word of writing; the pixel eraser cuts strokes where it passes, and takes the letters it touches. Fills
+/// and highlights go whole.
 enum AgentEraser {
     /// What's left of `item` after the eraser moves from `a` to `b`, `radius` wide (page points).
     static func erase(_ item: AgentInk, from a: CGPoint, to b: CGPoint, radius: CGFloat, pixel: Bool) -> [AgentInk] {
@@ -361,7 +363,8 @@ enum AgentEraser {
         case .text(let t):
             // The letters' body, not the room Caveat's tails reach into.
             let body = t.bounds.insetBy(dx: 2, dy: t.bounds.height * 0.15)
-            return touches(body, a, b, radius) ? [] : [item]
+            guard touches(body, a, b, radius) else { return [item] }
+            return erase(t, from: a, to: b, radius: radius, wholeWords: !pixel).map { .text($0) }
         case .stroke(let s):
             let reach = radius + s.width / 2
             if s.fill != nil || s.highlight, s.points.count > 2 {
@@ -389,6 +392,75 @@ enum AgentEraser {
                 return .stroke(piece)
             }
         }
+    }
+
+    /// What's left of a line of writing once the letters the eraser crosses are gone (with `wholeWords`, the words
+    /// they're in): the pieces either side, each written where it was.
+    static func erase(_ t: AgentText, from a: CGPoint, to b: CGPoint, radius: CGFloat, wholeWords: Bool) -> [AgentText] {
+        let chars = Array(t.text)
+        guard !chars.isEmpty else { return [] }
+        let font = Handwriting.font(size: t.size)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: t.text, attributes: [.font: font]))
+        let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        let left = t.center.x - width / 2
+        let baseline = t.center.y - font.lineHeight / 2 + font.ascender
+
+        // Each character's span along the line, in page points (upright: Caveat's lean is taken off the eraser).
+        var spans: [ClosedRange<CGFloat>] = []
+        var index = 0
+        for c in chars {
+            let next = index + c.utf16.count
+            let x0 = CTLineGetOffsetForStringIndex(line, index, nil), x1 = CTLineGetOffsetForStringIndex(line, next, nil)
+            spans.append(left + min(x0, x1)...left + max(x0, x1))
+            index = next
+        }
+
+        // The letters' body, above the baseline and a little below it.
+        let top = baseline - font.ascender * 0.85, bottom = baseline - font.descender * 0.5
+        var gone = [Bool](repeating: false, count: chars.count)
+        let n = max(1, Int(hypot(b.x - a.x, b.y - a.y) / 2))
+        for k in 0...n {
+            let s = CGFloat(k) / CGFloat(n)
+            let p = CGPoint(x: a.x + (b.x - a.x) * s, y: a.y + (b.y - a.y) * s)
+            guard p.y >= top - radius, p.y <= bottom + radius else { continue }
+            let x = p.x - (baseline - min(max(p.y, top), bottom)) * HandwritingLine.slant
+            for (i, span) in spans.enumerated() where !chars[i].isWhitespace {
+                if x >= span.lowerBound - radius, x <= span.upperBound + radius { gone[i] = true }
+            }
+        }
+        guard gone.contains(true) else { return [t] }
+
+        if wholeWords {
+            var i = 0
+            while i < chars.count {
+                guard !chars[i].isWhitespace else { i += 1; continue }
+                var j = i
+                while j < chars.count, !chars[j].isWhitespace { j += 1 }
+                if gone[i..<j].contains(true) { for w in i..<j { gone[w] = true } }
+                i = j
+            }
+        }
+
+        // The runs of letters left, without the spaces at their ends, each starting where it did.
+        var pieces: [AgentText] = []
+        var i = 0
+        while i < chars.count {
+            guard !gone[i] else { i += 1; continue }
+            var j = i
+            while j < chars.count, !gone[j] { j += 1 }
+            var lo = i, hi = j
+            while lo < hi, chars[lo].isWhitespace { lo += 1 }
+            while hi > lo, chars[hi - 1].isWhitespace { hi -= 1 }
+            if lo < hi {
+                let text = String(chars[lo..<hi])
+                var piece = t
+                piece.text = text
+                piece.center.x = spans[lo].lowerBound + Handwriting.width(of: text, size: t.size) / 2
+                pieces.append(piece)
+            }
+            i = j
+        }
+        return pieces
     }
 
     private static func touches(_ r: CGRect, _ a: CGPoint, _ b: CGPoint, _ radius: CGFloat) -> Bool {

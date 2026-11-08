@@ -11,7 +11,7 @@ targets:
     scheme:
       testTargets: [ScribeTests]
     preBuildScripts:
-      - name: Only Claude Haiku 5.5
+      - name: Only Claude Sonnet 5.5
         script: '"$SRCROOT/scripts/check-model.sh"'
         basedOnDependencyAnalysis: false
     info:

@@ -100,7 +100,7 @@ enum ConnectionTester {
         }
     }
 
-    /// Sends a real one-line request to Claude Haiku 5.5, so a pass means the agents will work.
+    /// Sends a real one-line request to Claude Sonnet 5.5, so a pass means the agents will work.
     private static func testClaude(key: String) async -> ConnectionStatus {
         do {
             let reply = try await ClaudeClient(apiKey: key).ping()

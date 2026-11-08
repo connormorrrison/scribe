@@ -89,7 +89,8 @@ struct ChromeSymbol: View {
 
 /// A 44 pt dot at the top. It widens into a slim bar while the agent listens or works, and into the "Ask the
 /// agent…" field when the person types instead of talking. A spoken answer streams through it in time with the
-/// voice; an answer that isn't spoken goes in `AgentReplyBar`, just below.
+/// voice. An answer that isn't spoken opens the bar out downwards to show all of it; once it's had time to be read
+/// (or the person moves on) it folds back, the bar says "Moved to History" for a moment, and it's a dot again.
 struct AgentControl: View {
     @Bindable var model: CanvasModel
     var openSettings: () -> Void
@@ -107,20 +108,25 @@ struct AgentControl: View {
     /// The person's words, while they're speaking.
     private var hearing: Bool { state == .listening && !model.heard.isEmpty }
     private var streaming: Bool { shownReply != nil || hearing }
-    private var expanded: Bool { typing || state != .idle || shownReply != nil }
+    /// The agent's typed answer, while the bar is open to show it.
+    private var answer: AgentReply? { typing ? nil : model.textReply }
+    /// "Moved to History", after an answer folds away.
+    private var notice: Bool { !typing && state == .idle && answer == nil && model.movedToHistory }
+    private var expanded: Bool { typing || state != .idle || shownReply != nil || answer != nil || notice }
     /// Stop ends whatever the agent is doing: listening, thinking or speaking.
     private var showsStop: Bool { !typing && (state != .idle || shownReply != nil) }
 
     /// What the bar shows. A change of mode gets the livelier spring.
-    private enum Mode: Hashable { case dot, line, field, reply }
+    private enum Mode: Hashable { case dot, line, field, reply, answer }
     private var mode: Mode {
         if typing { return .field }
+        if answer != nil { return .answer }
         if streaming { return .reply }
         return expanded ? .line : .dot
     }
 
-    /// The field is as wide as the reply bar under it, so the question and the answer line up.
-    private static let fieldWidth: CGFloat = AgentReplyBar.width
+    /// Narrow enough to clear a visualization card in the top right.
+    private static let fieldWidth: CGFloat = 340
     private static let replyWidth: CGFloat = 400
     /// The base body size, as in the rest of the app.
     static let textSize: CGFloat = 17
@@ -129,19 +135,30 @@ struct AgentControl: View {
 
     private var barWidth: CGFloat {
         if typing { return Self.fieldWidth }
-        if streaming { return Self.replyWidth }
+        if streaming || answer != nil { return Self.replyWidth }
         guard expanded else { return CanvasChromeMetrics.button }
         let w = ceil((model.agentLine as NSString).size(withAttributes: [.font: Self.lineFont]).width)
         return min(300, max(168, CanvasChromeMetrics.button + w + 16 + (showsStop ? CanvasChromeMetrics.button : 0)))
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
             HStack(spacing: 0) {
-                AgentOrb(model: model, responding: state == .thinking || state == .speaking || shownReply != nil,
-                         reduceMotion: reduceMotion)
-                    .modifier(OrbGather(trigger: mode, reduceMotion: reduceMotion))
-                if expanded && !typing && !streaming {
+                ZStack {
+                    if notice {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .foregroundStyle(Landing.blue)
+                            .frame(width: CanvasChromeMetrics.button, height: CanvasChromeMetrics.button)
+                            .transition(.blurReplace)
+                    } else {
+                        AgentOrb(model: model,
+                                 responding: state == .thinking || state == .speaking || shownReply != nil || answer != nil,
+                                 reduceMotion: reduceMotion)
+                            .modifier(OrbGather(trigger: mode, reduceMotion: reduceMotion))
+                            .transition(.blurReplace)
+                    }
+                }
+                if expanded && !typing && !streaming && answer == nil {
                     ShimmerText(text: model.agentLine, shimmering: state == .thinking, reduceMotion: reduceMotion)
                         .font(.system(size: Self.textSize, weight: .regular, design: .rounded))
                         .lineLimit(1)
@@ -155,12 +172,24 @@ struct AgentControl: View {
             }
             .contentShape(Rectangle())
             .onTapGesture {
-                if typing { fieldFocused = true } else { model.toggleAgent() }
+                if typing {
+                    fieldFocused = true
+                } else if notice {
+                    model.clearMovedToHistory()
+                    openHistory()
+                } else if answer != nil {
+                    model.dismissReply()
+                } else {
+                    model.toggleAgent()
+                }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(state == .idle ? "Talk to the agent" : model.agentLine)
+            .accessibilityLabel(notice ? "Moved to History" : answer != nil ? "Agent" :
+                                state == .idle ? "Talk to the agent" : model.agentLine)
             .accessibilityAddTraits([.isButton, .updatesFrequently])
-            .accessibilityHint(state == .idle ? "Touch and hold for more options"
+            .accessibilityHint(notice ? "Double-tap to open History"
+                               : answer != nil ? "Double-tap to put the answer away"
+                               : state == .idle ? "Touch and hold for more options"
                                : state == .listening ? "Double-tap when you're done talking" : "Double-tap to stop")
 
             if typing {
@@ -200,35 +229,49 @@ struct AgentControl: View {
                     .transition(.opacity)
             }
 
+            if let answer {
+                AnswerText(reply: answer, reduceMotion: reduceMotion, readAloud: { model.readReplyAloud() },
+                           finished: { model.dismissReply() },
+                           openHistory: {
+                               model.dismissReply(notice: false)
+                               openHistory()
+                           })
+                    .transition(reveal)
+            }
+
             if showsStop {
                 ChromeButton(title: "Stop", symbol: "stop.fill") { model.stopAgent() }
                     .transition(.opacity)
             }
         }
-        .frame(width: barWidth, height: CanvasChromeMetrics.button, alignment: .leading)
-        .clipShape(Capsule())
-        .canvasChrome(Capsule())
+        // One line high, except while an answer is open: then as tall as the answer needs.
+        .frame(width: barWidth, height: mode == .answer ? nil : CanvasChromeMetrics.button, alignment: .topLeading)
+        // A capsule at one line; the same rounding at its corners when it opens out.
+        .clipShape(RoundedRectangle(cornerRadius: CanvasChromeMetrics.button / 2))
+        .canvasChrome(RoundedRectangle(cornerRadius: CanvasChromeMetrics.button / 2))
+        .simultaneousGesture(answer == nil ? nil : flickUp)
         .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85), value: barWidth)
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.5, dampingFraction: 0.72),
                    value: mode)
         .animation(.easeInOut(duration: 0.2), value: showsStop)
         .animation(.easeInOut(duration: 0.2), value: model.agentLine)
+        .animation(.easeInOut(duration: 0.25), value: notice)
         .onChange(of: typing) { _, now in
             if !now { fieldFocused = false }
         }
         .onChange(of: model.showsKeyboard) { _, now in
-            // Asked to type: let the bar open before the keyboard rises. When the field comes back after an answer,
-            // the keyboard stays down until the person taps in to follow up.
+            // Asked to type: an answer still open goes to History, and the bar opens before the keyboard rises.
             guard now else { return }
+            if model.textReply != nil { model.dismissReply(notice: false) }
+            model.clearMovedToHistory()
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(reduceMotion ? 0 : 220))
                 if typing { fieldFocused = true }
             }
         }
         .onChange(of: fieldFocused) { _, focused in
-            // Tapped away from an empty field: fold back into the dot. Not while an answer is under it: the two go
-            // together, and the person may just be putting the keyboard down to read.
-            if !focused, typing, !canSend, model.textReply == nil { model.showsKeyboard = false }
+            // Tapped away from an empty field: fold back into the dot.
+            if !focused, typing, !canSend { model.showsKeyboard = false }
         }
         .contextMenu {
             if state == .idle {
@@ -249,7 +292,7 @@ struct AgentControl: View {
 
     private var typeField: some View {
         HStack(spacing: 0) {
-            TextField(model.textReply == nil ? "Ask the agent…" : "Reply…", text: $model.draft)
+            TextField("Ask the agent…", text: $model.draft)
                 .font(.system(size: Self.textSize, weight: .regular, design: .rounded))
                 .focused($fieldFocused)
                 .submitLabel(.send)
@@ -269,6 +312,14 @@ struct AgentControl: View {
     }
 
     private var canSend: Bool { !model.draft.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// Flicking an open answer up puts it away.
+    private var flickUp: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onEnded { drag in
+                if drag.translation.height < -24 || drag.predictedEndTranslation.height < -80 { model.dismissReply() }
+            }
+    }
 
     private func send() {
         guard canSend else { return }
@@ -397,61 +448,111 @@ private struct ReplyStream: View {
     }
 }
 
-/// The agent's answer when it isn't spoken (to something typed, or asked of a lasso), just under the agent control.
-/// One line for a short answer, growing to three at most; the whole answer is a tap away in History. It holds still
-/// to be read at the person's own pace, and stays until they move on: tapping or writing on the page, flicking it
-/// up, closing the field, or asking again (`CanvasModel.moveOn()`). Read Aloud speaks it.
-struct AgentReplyBar: View {
+/// The agent's answer when it isn't spoken (to something typed, or asked of a lasso), all of it, in the agent bar
+/// opened out downwards. Its words fade up in a quick sweep, like the spoken answer's but faster. It holds still for
+/// as long as it takes to read (`AgentReply.readingTime`), longer while it's being scrolled, then `finished` folds it
+/// away into History. A long answer scrolls inside the bar. Tap it to open History; Read Aloud speaks it.
+private struct AnswerText: View {
     let reply: AgentReply
+    let reduceMotion: Bool
     let readAloud: () -> Void
-    let dismiss: () -> Void
+    let finished: () -> Void
     let openHistory: () -> Void
 
-    /// Narrow enough to clear a visualization card in the top right.
-    static let width: CGFloat = 340
-    @State private var lift: CGFloat = 0
+    /// Taller than this, the answer scrolls.
+    private static let maxHeight: CGFloat = 380
+
+    @State private var shown: Double = 0
+    @State private var textHeight: CGFloat = CanvasChromeMetrics.button
+    @State private var scrolling = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            Text(reply.text)
-                .font(.system(size: AgentControl.textSize, weight: .regular, design: .rounded))
-                .foregroundStyle(.primary)
-                .lineLimit(3)
-                .truncationMode(.tail)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // 11 pt above and below one line makes the 44 pt of the bar above.
-                .padding(.vertical, 11)
-                .padding(.leading, 20)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: openHistory)
-                .accessibilityAddTraits(.isButton)
-                .accessibilityHint("Double-tap to see it in History")
+        HStack(alignment: .top, spacing: 0) {
+            ScrollView {
+                WordRevealText(words: reply.words, shown: shown)
+                    .font(.system(size: AgentControl.textSize, weight: .regular, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // 11 pt above and below one line makes the 44 pt of the bar.
+                    .padding(.vertical, 11)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { textHeight = $0 }
+            }
+            .frame(height: min(max(textHeight, CanvasChromeMetrics.button), Self.maxHeight))
+            .scrollBounceBehavior(.basedOnSize)
+            .onScrollPhaseChange { _, phase in scrolling = phase != .idle }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: openHistory)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(reply.text)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint("Double-tap to see it in History")
             ChromeButton(title: "Read Aloud", symbol: "speaker.wave.2", action: readAloud)
                 .padding(.trailing, 2)
         }
-        .frame(width: Self.width)
-        .frame(minHeight: CanvasChromeMetrics.button)
-        // A capsule while it's one line; rounded the same at its corners when it grows.
-        .canvasChrome(RoundedRectangle(cornerRadius: CanvasChromeMetrics.button / 2, style: .continuous))
-        .offset(y: lift)
-        .simultaneousGesture(flickUp)
-        .accessibilityElement(children: .contain)
-        .accessibilityAction(named: "Dismiss", dismiss)
-        .task(id: reply.id) { AccessibilityNotification.Announcement(reply.text).post() }
+        .task(id: reply.id) {
+            AccessibilityNotification.Announcement(reply.text).post()
+            let count = Double(reply.words.count)
+            if reduceMotion {
+                shown = count
+            } else {
+                shown = 0
+                withAnimation(.linear(duration: AgentReply.revealTime(words: reply.words.count))) { shown = count + 1 }
+            }
+        }
+        // Restarts when scrolling stops: someone scrolling is still reading.
+        .task(id: [reply.id.hashValue, scrolling ? 1 : 0]) {
+            guard !scrolling else { return }
+            let wait = AgentReply.revealTime(words: reply.words.count) + reply.readingTime
+            guard (try? await Task.sleep(for: .seconds(wait))) != nil else { return }
+            finished()
+        }
+    }
+}
+
+/// Words that fade up and sharpen one after another as `shown` rises (fractional: a word part way in is part way
+/// there). Drawn by a text renderer, so the text wraps as it will in the end from the first word, and nothing
+/// shifts as words arrive.
+private struct WordRevealText: View {
+    let words: [String]
+    let shown: Double
+
+    var body: some View {
+        let text = words.enumerated().reduce(Text("")) { text, item in
+            let word = Text(item.element).customAttribute(WordIndex(index: item.offset))
+            return item.offset == 0 ? Text("\(text)\(word)") : Text("\(text) \(word)")
+        }
+        text.textRenderer(WordReveal(shown: shown))
+    }
+}
+
+private struct WordIndex: TextAttribute {
+    let index: Int
+}
+
+private struct WordReveal: TextRenderer {
+    var shown: Double
+
+    var animatableData: Double {
+        get { shown }
+        set { shown = newValue }
     }
 
-    /// Flicked up, it goes; let go short of that and it settles back.
-    private var flickUp: some Gesture {
-        DragGesture(minimumDistance: 12)
-            .onChanged { lift = min(0, $0.translation.height) }
-            .onEnded { drag in
-                if drag.translation.height < -24 || drag.predictedEndTranslation.height < -80 {
-                    dismiss()
-                } else {
-                    withAnimation(.snappy) { lift = 0 }
+    func draw(layout: Text.Layout, in context: inout GraphicsContext) {
+        for line in layout {
+            for run in line {
+                guard let word = run[WordIndex.self] else {
+                    context.draw(run)
+                    continue
                 }
+                let progress = min(1, max(0, shown - Double(word.index)))
+                guard progress > 0 else { continue }
+                var copy = context
+                copy.opacity = progress
+                if progress < 1 { copy.addFilter(.blur(radius: (1 - progress) * 3)) }
+                copy.draw(run)
             }
+        }
     }
 }
 

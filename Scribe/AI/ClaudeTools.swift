@@ -86,12 +86,18 @@ extension ClaudeClient {
     /// as Claude starts writing a call to it, long before its input is complete.
     func sendWithTools(_ messages: [JSONValue], system: String?, tools: [JSONValue], maxTokens: Int = 32_000,
                        effort: Effort = .medium, toolStarted: @MainActor (String) -> Void = { _ in }) async throws -> ToolTurn {
+        // Prompt caching: the tool definitions rarely change, so they get a cache point of their own and are reused
+        // across turns. The top-level marker caches the conversation so far, so each round of a tool loop (which resends
+        // the page picture and map) reads the earlier rounds back cheaply instead of paying for them again.
+        var tools = tools
+        if let last = tools.indices.last { tools[last]["cache_control"] = ["type": "ephemeral"] }
         var body: JSONValue = [
             "model": .string(ClaudeModel.id),
             "max_tokens": .number(Double(maxTokens)),
             "messages": .array(messages),
             "tools": .array(tools),
             "output_config": ["effort": .string(effort.rawValue)],
+            "cache_control": ["type": "ephemeral"],
             "stream": true
         ]
         if let system { body["system"] = .string(system) }

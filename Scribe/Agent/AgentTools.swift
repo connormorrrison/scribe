@@ -128,13 +128,6 @@ enum AgentTools {
              ],
              required: ["shapes"]),
 
-        Tool(name: "extend_page", description: """
-            Add blank space at the bottom of the page when there's no room left to write or draw. Placement does this \
-            by itself when nothing fits, so you rarely need it. Example: {"height": 300}
-            """,
-             properties: ["height": ["type": "number", "description": "Points to add, 100–800."]],
-             required: ["height"]),
-
         Tool(name: "erase_marks", description: """
             Erase some of your own marks (am_N from YOUR MARKS, or the ids your tool results gave), for example a \
             mark in the wrong place or one they asked you to remove. Never touches their ink. \

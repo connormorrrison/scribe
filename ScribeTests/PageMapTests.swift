@@ -411,16 +411,35 @@ final class PageMapTests: XCTestCase {
         XCTAssertEqual(mark.duration, AgentInk.stroke(a).duration + AgentInk.stroke(b).duration + AgentMark.penLift, accuracy: 0.0001)
     }
 
-    func testADocumentPageNeverGrows() {
+    func testAPageNeverGrows() {
         var c = context(grid: OccupancyGrid(size: CGSize(width: 1100, height: 800)).marking([CGRect(x: 0, y: 0, width: 1100, height: 800)]))
-        c.canGrow = false
         let d = ActionValidator.validate("write", input: ["text": "no room", "near": ["box": [100, 100, 50, 50]]], context: &c)
         XCTAssertTrue(d.overflow, d.result)
         XCTAssertTrue(d.marks.isEmpty)
-        XCTAssertEqual(d.growPage, 0)
         XCTAssertEqual(c.pageSize.height, 800)
         XCTAssertTrue(ActionValidator.validate("extend_page", input: ["height": 300], context: &c).isError)
         XCTAssertEqual(c.pageSize.height, 800)
+    }
+
+    func testADrawingShrinksToFitBeforeItOverflows() {
+        // Only the top-left 300×220 is free: a 360×260 drawing fits there at 70%.
+        let full = CGRect(x: 0, y: 0, width: 1100, height: 800)
+        let busy = [CGRect(x: 0, y: 260, width: 1100, height: 540), CGRect(x: 340, y: 0, width: 760, height: 260)]
+        var c = context(grid: OccupancyGrid(size: full.size).marking(busy))
+        let shapes: JSONValue = [["type": "rect", "box": [0, 0, 360, 260]]]
+        let d = ActionValidator.validate("draw", input: ["shapes": shapes, "size": [360, 260], "near": ["box": [20, 20, 10, 10]]],
+                                         context: &c)
+        XCTAssertFalse(d.isError, d.result)
+        XCTAssertFalse(d.overflow)
+        XCTAssertTrue(d.result.contains("shrunk"), d.result)
+        let b = d.marks[0].bounds
+        XCTAssertLessThan(b.width, 340)
+        XCTAssertLessThan(b.maxY, 262)
+        XCTAssertEqual(c.pageSize.height, 800)
+
+        var full2 = context(grid: OccupancyGrid(size: full.size).marking([full]))
+        let none = ActionValidator.validate("draw", input: ["shapes": shapes, "near": ["box": [20, 20, 10, 10]]], context: &full2)
+        XCTAssertTrue(none.overflow, none.result)
     }
 
     func testAScratchPageFillsFromTheTop() {
@@ -445,15 +464,6 @@ final class PageMapTests: XCTestCase {
         XCTAssertEqual(missed, [line])
         let words = AgentInk.text(AgentText(text: "x = 2", center: CGPoint(x: 300, y: 300), size: 24))
         XCTAssertEqual(AgentEraser.erase(words, from: CGPoint(x: 300, y: 300), to: CGPoint(x: 302, y: 300), radius: 5, pixel: true), [])
-    }
-
-    func testWriteWithNoRoomAddsSpaceBelow() {
-        var c = context(grid: OccupancyGrid(size: CGSize(width: 1100, height: 800)).marking([CGRect(x: 0, y: 0, width: 1100, height: 800)]))
-        let d = ActionValidator.validate("write", input: ["text": "no room", "near": ["box": [100, 100, 50, 50]]], context: &c)
-        XCTAssertFalse(d.isError, d.result)
-        XCTAssertGreaterThan(d.growPage, 0)
-        XCTAssertGreaterThan(d.marks[0].bounds.minY, 800)
-        XCTAssertEqual(c.pageSize.height, 800 + d.growPage)
     }
 
     func testMarksAndTheirTargets() {

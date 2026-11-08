@@ -20,6 +20,13 @@ struct AgentReply: Identifiable, Equatable {
     static func words(in text: String) -> [String] {
         text.split(whereSeparator: \.isWhitespace).map(String.init)
     }
+
+    /// How long a typed answer stays open once all of it is showing: time to read it at about 210 words a minute,
+    /// plus a moment, between 5 and 30 seconds.
+    var readingTime: TimeInterval { min(30, max(5, 2 + Double(words.count) / 3.5)) }
+
+    /// How long a typed answer's words take to sweep in: quick, and never more than a second and a half.
+    static func revealTime(words: Int) -> TimeInterval { min(1.5, 0.3 + Double(words) * 0.03) }
 }
 
 /// A banner just under the top row.
@@ -113,8 +120,12 @@ final class CanvasModel {
     var agent = AgentState.idle
     /// The agent's answer: streaming through the agent bar if it's spoken, otherwise in the reply bar under it.
     var reply: AgentReply?
-    /// The agent's answer when it isn't spoken, for the reply bar. It stays until the person moves on.
+    /// The agent's answer when it isn't spoken. The agent bar opens out to show all of it, then folds it away into
+    /// History once it's had time to be read, or as soon as the person moves on.
     var textReply: AgentReply? { agent == .idle && reply?.spoken == false ? reply : nil }
+    /// A typed answer just folded away: for a moment the agent bar says it's in History (tap to open it).
+    var movedToHistory = false
+    @ObservationIgnored private var movedToHistoryTask: Task<Void, Never>?
     /// What's typed in the "Ask the agent…" field.
     var draft = ""
     /// What the person has said so far while the agent listens, as it's recognised.
@@ -474,7 +485,8 @@ final class CanvasModel {
         guard let i = index(of: pageID) else { return }
         edit("Add Card", reload: false) {
             $0.pages[i].cards.append(card)
-            $0.history.append(HistoryEntry(author: .agent, text: "Made “\(card.title)”"))
+            $0.history.append(HistoryEntry(author: .agent, text: "Made “\(card.title)”", symbol: "rectangle.stack",
+                                           pageID: pageID))
         }
         if card.isAnimated { clocks[card.id] = AnimationClock() }
     }
@@ -488,7 +500,8 @@ final class CanvasModel {
     func addVisualization(_ visualization: Visualization) {
         edit("Add Visualization", reload: false) {
             $0.visualizations.append(visualization)
-            $0.history.append(HistoryEntry(author: .agent, text: "Made “\(visualization.title)”"))
+            $0.history.append(HistoryEntry(author: .agent, text: "Made “\(visualization.title)”",
+                                           symbol: "rectangle.stack", visualizationID: visualization.id))
         }
         showsVisualizations = true
     }
@@ -547,7 +560,9 @@ final class CanvasModel {
                     self.edit("Remake Visualization", reload: false) { content in
                         guard let i = content.visualizations.firstIndex(where: { $0.id == id }) else { return }
                         content.visualizations[i] = new
-                        content.history.append(HistoryEntry(author: .agent, text: "Remade “\(new.title)”"))
+                        content.history.append(HistoryEntry(author: .agent, text: "Remade “\(new.title)”",
+                                                            symbol: "arrow.triangle.2.circlepath",
+                                                            visualizationID: new.id))
                     }
                 }
                 self.visualizationErrors[id] = nil
@@ -612,15 +627,85 @@ final class CanvasModel {
         }
     }
 
-    /// A picture of a visualization's page just after it started, kept for the library's thumbnail of this note.
+    /// A picture of a visualization's page just after it started, kept for the library's thumbnail of this note and
+    /// for History.
     func visualizationSnapshot(_ image: UIImage, for id: UUID) {
         guard content.visualizations.contains(where: { $0.id == id }) else { return }
+        visualizationPreviews[id] = image
         let file = file, documentID = document.id
         Task.detached(priority: .utility) {
             guard let data = image.pngData() else { return }
             file.saveVisualizationImage(data, for: id)
             await MainActor.run { NoteThumbnails.shared.invalidate(documentID) }
         }
+    }
+
+    // MARK: Pictures for History
+
+    /// Pictures of visualizations taken this session, so History shows a new card as soon as it's drawn.
+    private(set) var visualizationPreviews: [UUID: UIImage] = [:]
+    /// Pictures read from the note's files, and of the agent's steps on the page.
+    @ObservationIgnored private var savedVisualizationPreviews: [UUID: UIImage] = [:]
+    @ObservationIgnored private var stepPreviews: [UUID: (marks: [AgentMark], background: PageBackground, image: UIImage)] = [:]
+
+    /// A picture of a visualization the agent made, as it looked just after it started.
+    func visualizationPreview(_ id: UUID) -> UIImage? {
+        if let fresh = visualizationPreviews[id] { return fresh }
+        if let saved = savedVisualizationPreviews[id] { return saved }
+        let saved = file.visualizationImage(id)
+        savedVisualizationPreviews[id] = saved
+        return saved
+    }
+
+    /// A small picture of what the agent drew in one step: the marks still on the page from that step, over the
+    /// paper and the person's ink around them, so it's clear what was circled or written next to. Nil when the
+    /// step drew nothing that's still there.
+    func stepPreview(_ step: HistoryEntry, background: PageBackground) -> UIImage? {
+        guard let ids = step.markIDs, !ids.isEmpty, let pageID = step.pageID, let page = page(pageID) else { return nil }
+        let wanted = Set(ids)
+        let marks = page.agentMarks.filter { wanted.contains($0.id) }
+        guard !marks.isEmpty else { return nil }
+        let bg = content.background ?? background
+        if let hit = stepPreviews[step.id], hit.marks == marks, hit.background == bg { return hit.image }
+
+        let region = Self.previewRegion(around: marks.reduce(CGRect.null) { $0.union($1.bounds) }, in: page.bounds)
+        guard !region.isNull, region.width > 1, region.height > 1 else { return nil }
+        // Pixels per page point: enough for the preview at 2x, never more than 2.
+        let scale = min(2, Self.previewSize.width * 2 / region.width, Self.previewSize.height * 2 / region.height)
+        var shown = page
+        shown.agentMarks = marks
+        shown.agentDrawing = PKDrawing()
+        guard let image = PageRenderer.image(of: shown, background: bg, pixelWidth: (NotePageMetrics.width * scale).rounded(),
+                                             pdf: pdfURL, image: { [weak self] in self?.image(named: $0) })?.cgImage
+        else { return nil }
+        let px = CGFloat(image.width) / NotePageMetrics.width
+        let crop = CGRect(x: region.minX * px, y: region.minY * px, width: region.width * px, height: region.height * px)
+            .integral
+        guard let cropped = image.cropping(to: crop) else { return nil }
+        let preview = UIImage(cgImage: cropped, scale: 2, orientation: .up)
+        stepPreviews[step.id] = (marks, bg, preview)
+        return preview
+    }
+
+    /// The largest a step's picture is shown in History, in points.
+    static let previewSize = CGSize(width: 280, height: 150)
+
+    /// The part of the page a step's picture shows: its marks with a margin, widened to the preview's shape (and to
+    /// at least a small area, so a tick shows what it's next to), kept on the page.
+    nonisolated static func previewRegion(around marks: CGRect, in page: CGRect) -> CGRect {
+        guard !marks.isNull else { return .null }
+        var r = marks.insetBy(dx: -28, dy: -28)
+        let aspect = previewSize.width / previewSize.height
+        r = r.insetBy(dx: -max(0, (220 - r.width) / 2), dy: -max(0, (110 - r.height) / 2))
+        // Widen a tall picture toward the preview's shape (to at most square, so a tall diagram stays readable).
+        if r.width < r.height { r = r.insetBy(dx: -(r.height - r.width) / 2, dy: 0) }
+        if r.width / r.height > aspect * 1.6 { r = r.insetBy(dx: 0, dy: -(r.width / (aspect * 1.6) - r.height) / 2) }
+        // Slide it back onto the page, then trim what still hangs over.
+        if r.minX < page.minX { r.origin.x = page.minX }
+        if r.maxX > page.maxX { r.origin.x = max(page.minX, page.maxX - r.width) }
+        if r.minY < page.minY { r.origin.y = page.minY }
+        if r.maxY > page.maxY { r.origin.y = max(page.minY, page.maxY - r.height) }
+        return r.intersection(page)
     }
 
     // MARK: Images
@@ -847,6 +932,7 @@ final class CanvasModel {
         showsKeyboard = false
         reply = nil
         banner = nil
+        movedToHistory = false
         say(action.request, spoken: false)
         run { model in try await model.reply(speak: false, focus: focus) }
     }
@@ -877,7 +963,7 @@ final class CanvasModel {
     /// One line for the agent bar while the agent listens or works.
     var agentLine: String {
         switch agent {
-        case .idle: ""
+        case .idle: movedToHistory ? "Moved to History" : ""
         case .listening: "Listening…"
         case .thinking: liveMark == nil && agentCursor == nil ? "Thinking…" : "Writing on your page…"
         case .speaking: "Speaking…"
@@ -904,6 +990,7 @@ final class CanvasModel {
             guard keysReady() else { return }
             banner = nil
             reply = nil
+            movedToHistory = false
             listen(focus: lasso.map { LassoFocus(pageID: $0.pageID, bounds: $0.bounds, action: .ask) })
         case .listening:
             voice.finish()
@@ -912,13 +999,15 @@ final class CanvasModel {
         }
     }
 
-    /// Sends what was typed to the agent. It answers in text, without speaking. The field comes back once it has
-    /// answered, for a follow-up.
+    /// Sends what was typed to the agent. It answers in text, without speaking. The field folds into the agent bar,
+    /// which works and answers the same way it does for speech.
     func send(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, keysReady(voice: false) else { return }
         reply = nil
         banner = nil
+        movedToHistory = false
+        showsKeyboard = false
         let focus = takeLassoFocus()
         say(text, spoken: false)
         run { model in try await model.reply(speak: false, focus: focus) }
@@ -1029,7 +1118,6 @@ final class CanvasModel {
             }
             var context = ActionValidator.ToolContext(snapshot: snapshot, marks: page.agentMarks)
             context.chrome = chromeOnPage(pageID, height: page.height)
-            context.canGrow = page.pdfPage == nil
             drawing = DrawingTurn(pageID: pageID, context: context, before: (page.agentMarks, page.height))
         }
         defer {
@@ -1137,12 +1225,12 @@ final class CanvasModel {
         let before: (marks: [AgentMark], height: CGFloat)
         var drawn = 0
         var changed = false
-        /// The blank page after a document page, for what didn't fit on it.
+        /// The blank page after the page, for what didn't fit on it.
         var scratch: ScratchPage?
     }
 
-    /// A blank page the agent writes on when there's no room left on a document page (which never grows, so the
-    /// document still prints and exports at its own size), like grabbing a sheet of scrap paper.
+    /// A blank page the agent writes on when there's no room left on the page (which never grows: a drawing shrinks a
+    /// little to fit, and what still doesn't fit goes here), like grabbing a sheet of scrap paper.
     private struct ScratchPage {
         var pageID: UUID
         var context: ActionValidator.ToolContext
@@ -1163,7 +1251,7 @@ final class CanvasModel {
         var pageID = turn.pageID
         var onScratch = false
         if decision.overflow {
-            // No room on their document page: onto the blank page after it.
+            // No room on their page: onto the blank page after it.
             var scratch = turn.scratch ?? scratchPage(after: turn.pageID)
             decision = ActionValidator.validate(tool, input: input, context: &scratch.context)
             PageMapDebug.shared.logPlacement(tool, decision.notes, result: decision.result)
@@ -1188,9 +1276,9 @@ final class CanvasModel {
         guard !decision.isError else { return (decision.result, true) }
         guard let i = index(of: pageID) else { return ("The page isn't there any more.", true) }
         func touched() { if onScratch { turn.scratch?.changed = true } else { turn.changed = true } }
-        if decision.growPage > 0 {
-            withAnimation(.smooth) { content.pages[i].height += decision.growPage }
-            touched()
+        // A step in History, as it happens, so it sits between the question and the answer.
+        if let step = AgentStep.entry(drawn: decision.marks, erased: decision.erase.count, page: i + 1, pageID: pageID) {
+            content.history.append(step)
         }
         if !decision.erase.isEmpty {
             withAnimation(.easeOut(duration: 0.25)) { content.pages[i].agentMarks.removeAll { decision.erase.contains($0.id) } }
@@ -1281,7 +1369,6 @@ final class CanvasModel {
         undoManager.beginUndoGrouping()
         if turn.changed, let page = page(turn.pageID) {
             registerMarksUndo(pageID: turn.pageID, restoring: turn.before, current: (page.agentMarks, page.height))
-            log("Drew on page \((index(of: turn.pageID) ?? 0) + 1)", by: .agent)
         }
         if let scratch, let i = index(of: scratch.pageID) {
             pageMapper.markTurn(pageID: scratch.pageID)
@@ -1292,7 +1379,6 @@ final class CanvasModel {
             } else {
                 registerMarksUndo(pageID: scratch.pageID, restoring: scratch.before, current: (page.agentMarks, page.height))
             }
-            log("Drew on page \(i + 1)", by: .agent)
         }
         undoManager.endUndoGrouping()
         changed()
@@ -1345,10 +1431,19 @@ final class CanvasModel {
                 if liveMark?.markID == marks[m].id { liveMark = nil }
                 marks.remove(at: m)
             } else {
+                // What it says is what's left of its writing, for the next turn's page map.
+                let before = marks[m].items.compactMap(Self.writing), after = items.compactMap(Self.writing)
+                if before != after {
+                    marks[m].text = after.isEmpty ? nil : after.joined(separator: marks[m].kind == "drawing" ? ", " : " ")
+                }
                 marks[m].items = items
             }
         }
         if erased { content.pages[i].agentMarks = marks }
+    }
+
+    private static func writing(_ item: AgentInk) -> String? {
+        if case .text(let t) = item { t.text } else { nil }
     }
 
     func endErasingAgentMarks() {
@@ -1409,9 +1504,34 @@ final class CanvasModel {
         messages[last]["content"] = .array(blocks)
     }
 
-    /// Puts the reply in the agent bar away. It stays in History.
-    func dismissReply() {
+    /// Puts the reply in the agent bar away. It stays in History. A typed answer leaves a moment's "Moved to History"
+    /// in the bar, unless `notice` is false (the person is opening History anyway, or typing again).
+    func dismissReply(notice: Bool = true) {
+        let wasTyped = textReply != nil
         reply = nil
+        guard wasTyped, notice else { return }
+        movedToHistory = true
+        movedToHistoryTask?.cancel()
+        movedToHistoryTask = Task { @MainActor [weak self] in
+            guard (try? await Task.sleep(for: .seconds(2.4))) != nil else { return }
+            self?.movedToHistory = false
+        }
+    }
+
+    /// Tapped "Moved to History": the notice goes as History opens.
+    func clearMovedToHistory() {
+        movedToHistoryTask?.cancel()
+        movedToHistory = false
+    }
+
+    /// A step tapped in History: turns to the page it happened on, or brings the visualizations out.
+    func show(_ step: HistoryEntry) {
+        if let id = step.visualizationID, content.visualizations.contains(where: { $0.id == id }) {
+            withAnimation(.snappy) { showsVisualizations = true }
+        }
+        if let id = step.pageID, index(of: id) != nil {
+            withAnimation(.snappy) { currentPageID = id }
+        }
     }
 
     /// Reads the reply in the reply bar aloud. It moves into the agent bar, streaming in time with the voice.
@@ -1426,7 +1546,7 @@ final class CanvasModel {
     /// field stays with it, and only the keyboard goes down.
     func moveOn() {
         guard agent == .idle else { return }
-        if textReply != nil { reply = nil }
+        if textReply != nil { dismissReply() }
         guard showsKeyboard else { return }
         if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             showsKeyboard = false
@@ -1439,7 +1559,7 @@ final class CanvasModel {
     func toggleKeyboard() {
         if showsKeyboard {
             showsKeyboard = false
-            if textReply != nil { reply = nil }
+            if textReply != nil { dismissReply() }
         } else {
             showsKeyboard = true
         }

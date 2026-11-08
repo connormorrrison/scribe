@@ -8,8 +8,6 @@ enum ActionValidator {
     /// What one tool call became.
     struct ToolDecision {
         var marks: [AgentMark] = []
-        /// Points to add to the bottom of the page first.
-        var growPage: CGFloat = 0
         /// The agent's marks to remove.
         var erase: Set<UUID> = []
         /// The tool result: "ok", facts the agent may need, or why it was rejected.
@@ -17,7 +15,7 @@ enum ActionValidator {
         var isError = false
         /// Snapping and placement notes, for the debug log.
         var notes: [String] = []
-        /// It didn't fit on a page that can't grow (a document page): it belongs on a blank page after it.
+        /// It didn't fit on the page (pages never grow): it belongs on a blank page after it.
         var overflow = false
 
         static func reject(_ reason: String, notes: [String] = []) -> ToolDecision {
@@ -25,11 +23,10 @@ enum ActionValidator {
         }
     }
 
-    /// Everything the validator knows about this turn. It changes as calls are accepted (the page grows, marks take
-    /// space).
+    /// Everything the validator knows about this turn. It changes as calls are accepted (marks take space).
     struct ToolContext {
         var map: PageMap
-        /// The page as it will be when the accepted calls have run (extend_page included).
+        /// The page. It never grows: what doesn't fit goes on a blank page after it.
         var pageSize: CGSize
         /// Where the agent has drawn (before, and this turn): placement keeps clear of it.
         var placed: [CGRect]
@@ -85,13 +82,10 @@ enum ActionValidator {
 
         /// Where the floating controls cover the page (page points). Nothing the agent makes goes under them.
         var chrome: [CGRect] = []
-        /// False for a page of an imported document: it keeps its size, so it still prints and exports like the
-        /// original. What doesn't fit goes on a blank page after it instead.
-        var canGrow = true
         /// A blank page the agent took for what didn't fit on the page before it: anything goes anywhere on it, from
         /// the top down.
         var scratch = false
-        /// Set by placement when nothing fits and the page can't grow.
+        /// Set by placement when nothing fits on the page.
         fileprivate var overflowed = false
 
         /// `r` moved straight down (or, near the bottom, up) until it's clear of the controls.
@@ -114,7 +108,7 @@ enum ActionValidator {
 
     static func validate(_ name: String, input: JSONValue, context: inout ToolContext) -> ToolDecision {
         guard AgentTools.names.contains(name) else { return .reject("there's no tool `\(name)`") }
-        if name != "erase_marks" && name != "extend_page", context.drawn >= budget {
+        if name != "erase_marks", context.drawn >= budget {
             return .reject("that's enough marks for one turn; finish with a short line")
         }
         var decision: ToolDecision
@@ -124,7 +118,6 @@ enum ActionValidator {
             case "mark": decision = try mark(ToolInput.decode(MarkInput.self, from: input), &context)
             case "outline_region": decision = try outline(ToolInput.decode(OutlineInput.self, from: input), &context)
             case "draw": decision = try draw(ToolInput.decode(DrawInput.self, from: input), &context)
-            case "extend_page": decision = try extend(ToolInput.decode(ExtendInput.self, from: input), &context)
             case "erase_marks": decision = try erase(ToolInput.decode(EraseInput.self, from: input), &context)
             default: return .reject("there's no tool `\(name)`")
             }
@@ -193,7 +186,6 @@ enum ActionValidator {
         var at: [Double]?
     }
 
-    struct ExtendInput: Decodable { var height: Double }
     struct EraseInput: Decodable { var ids: [String] }
 
     // MARK: write
@@ -210,7 +202,6 @@ enum ActionValidator {
         let box = CGSize(width: (sizes.map(\.width).max() ?? 0) + 8, height: lineHeight * CGFloat(lines.count) + 4)
 
         var notes: [String] = []
-        var grow: CGFloat = 0
         let rect: CGRect
         if let at = input.at {
             guard at.count == 2 else { return .reject("`at` must be [x, y]") }
@@ -236,7 +227,6 @@ enum ActionValidator {
             notes.append(t.note)
             let placed = t.isFreeSpace ? placeInside(box, space: t.bounds, &c)
                 : place(box, near: t.bounds, side: input.side ?? .right, &c)
-            grow = placed.grow
             rect = placed.rect
             notes.append(placed.note)
         }
@@ -248,10 +238,10 @@ enum ActionValidator {
         let mark = AgentMark(turn: c.turn, kind: input.size == .label ? "label" : "note", text: lines.joined(separator: " "),
                              target: nil, items: items)
         var result = "ok, wrote at \(PageMap.format(rect))"
-        if let moved = notes.first(where: { $0.hasPrefix("moved ") || $0 == "covers text or ink" || $0.hasPrefix("no room") }) {
+        if let moved = notes.first(where: { $0.hasPrefix("moved ") || $0 == "covers text or ink" }) {
             result += " (\(moved))"
         }
-        return ToolDecision(marks: [mark], growPage: grow, result: result, notes: notes)
+        return ToolDecision(marks: [mark], result: result, notes: notes)
     }
 
     // MARK: mark
@@ -360,7 +350,6 @@ enum ActionValidator {
         let t = ResolvedTarget(bounds: resolved.map(\.bounds).reduce(CGRect.null) { $0.union($1) }, objectID: nil,
                                snapped: false, note: resolved.map(\.note).joined(separator: "; "))
         let ids = resolved.compactMap(\.objectID)
-        var grow: CGFloat = 0
         let label = input.label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !label.isEmpty {
             let size = c.textSize(.label)
@@ -374,13 +363,12 @@ enum ActionValidator {
                 c.placed.append(spot)
             } else {
                 let placed = place(box, near: t.bounds, side: .right, &c)
-                grow = placed.grow
                 items.append(.text(AgentText(text: label, center: center(placed.rect), size: size, color: color)))
             }
         }
         let mark = AgentMark(turn: c.turn, kind: "outline", text: label.isEmpty ? nil : label,
                              target: ids.isEmpty ? nil : ids.joined(separator: "+"), items: items)
-        return ToolDecision(marks: [mark], growPage: grow, result: "ok, traced " + traced.joined(separator: ", "),
+        return ToolDecision(marks: [mark], result: "ok, traced " + traced.joined(separator: ", "),
                             notes: [t.note])
     }
 
@@ -432,8 +420,8 @@ enum ActionValidator {
         let parsed = try DrawBuilder.parse(input.shapes, size: size, labelSize: c.textSize(.label), noteSize: c.textSize(.note))
 
         var notes: [String] = []
-        var grow: CGFloat = 0
         let frame: CGRect
+        var scale: CGFloat = 1
         if let at = input.at {
             guard at.count == 2 else { return .reject("`at` must be [x, y]: the box's top-left corner in page points") }
             let r = CGRect(x: at[0], y: at[1], width: size.width, height: size.height)
@@ -448,35 +436,56 @@ enum ActionValidator {
                 inFree = t.isFreeSpace
                 notes.append(t.note)
             }
-            let placed = inFree ? placeInside(size, space: anchor, &c) : place(size, near: anchor, side: input.side ?? .right, &c)
-            grow = placed.grow
-            frame = placed.rect
-            notes.append(placed.note)
+            // Full size if there's room; otherwise smaller, down to about half; otherwise it goes on a blank page.
+            var found: (rect: CGRect, note: String)?
+            for k in drawingScales {
+                let s = CGSize(width: size.width * k, height: size.height * k)
+                found = inFree ? (spotInside(s, space: anchor, c) ?? spot(s, near: anchor, side: .below, c))
+                    : spot(s, near: anchor, side: input.side ?? .right, c)
+                if found != nil { scale = k; break }
+            }
+            guard let found else {
+                c.overflowed = true
+                return .reject("there's no room for it on this page")
+            }
+            frame = found.rect
+            notes.append(found.note + (scale < 1 ? " at \(Int((scale * 100).rounded()))%" : ""))
         }
 
-        let layout = DrawBuilder.layout(parsed, in: frame)
+        let layout = DrawBuilder.layout(parsed, in: CGRect(origin: frame.origin, size: size))
+        let items = scale < 1 ? scaled(layout.items, by: scale, about: frame.origin) : layout.items
         let mark = AgentMark(turn: c.turn, kind: "drawing", text: parsed.texts.isEmpty ? nil : parsed.texts.joined(separator: ", "),
-                             target: nil, items: layout.items)
+                             target: nil, items: items)
         var result = "ok, drew \(parsed.count) shape\(parsed.count == 1 ? "" : "s") in \(PageMap.format(frame))"
+        if scale < 1 { result += ", shrunk to \(Int((scale * 100).rounded()))% to fit on the page" }
         var checks = layout.notes
         if parsed.clamped {
             checks.insert("some points were outside the \(Int(size.width))×\(Int(size.height)) box and were pulled in", at: 0)
         }
         if !checks.isEmpty { result += ". Check: " + checks.prefix(4).joined(separator: "; ") }
-        return ToolDecision(marks: [mark], growPage: grow, result: result, notes: notes + checks)
+        return ToolDecision(marks: [mark], result: result, notes: notes + checks)
     }
 
-    // MARK: extend_page and erase_marks
+    /// How small a drawing may shrink to fit on the page before it goes on a blank page instead.
+    static let drawingScales: [CGFloat] = [1, 0.85, 0.7, 0.55]
 
-    private static func extend(_ input: ExtendInput, _ c: inout ToolContext) throws -> ToolDecision {
-        guard c.canGrow else {
-            return .reject("this is a page of their document, so it keeps its size. Write or draw as usual: what doesn't fit goes on a blank page after it by itself")
+    /// `items` shrunk by `k` towards `origin`, text included.
+    static func scaled(_ items: [AgentInk], by k: CGFloat, about origin: CGPoint) -> [AgentInk] {
+        func move(_ p: CGPoint) -> CGPoint { CGPoint(x: origin.x + (p.x - origin.x) * k, y: origin.y + (p.y - origin.y) * k) }
+        return items.map { ink in
+            switch ink {
+            case .stroke(var s):
+                s.points = s.points.map(move)
+                return .stroke(s)
+            case .text(var t):
+                t.center = move(t.center)
+                t.size *= k
+                return .text(t)
+            }
         }
-        let h = CGFloat(min(800, max(100, input.height)))
-        c.pageSize.height += h
-        return ToolDecision(growPage: h, result: "ok, the page is now \(Int(c.pageSize.width))×\(Int(c.pageSize.height)) pt; "
-                            + "the new space is y \(Int(c.pageSize.height - h))–\(Int(c.pageSize.height))")
     }
+
+    // MARK: erase_marks
 
     private static func erase(_ input: EraseInput, _ c: inout ToolContext) throws -> ToolDecision {
         var ids = Set<UUID>()
@@ -513,13 +522,20 @@ enum ActionValidator {
 
     // MARK: Placement
 
-    /// A clear spot for `size` beside `anchor`; or the nearest clear spot not far off; or, when there's none, new
-    /// space added below the page.
+    /// A clear spot for `size` beside `anchor`; or the nearest clear spot not far off. When there's none, the call
+    /// overflows onto a blank page after this one: the page never grows.
     static func place(_ size: CGSize, near anchor: CGRect, side: PlacementSide, _ c: inout ToolContext)
-        -> (rect: CGRect, grow: CGFloat, note: String) {
+        -> (rect: CGRect, note: String) {
+        if let found = spot(size, near: anchor, side: side, c) { return found }
+        c.overflowed = true
+        return (CGRect(origin: .zero, size: size), "no room on this page")
+    }
+
+    /// A clear spot for `size` beside `anchor`, or the nearest clear spot not far off; nil if there's none.
+    static func spot(_ size: CGSize, near anchor: CGRect, side: PlacementSide, _ c: ToolContext) -> (rect: CGRect, note: String)? {
         if let r = Placement.find(size: size, near: anchor, side: side, page: c.pageRect, obstacles: c.obstacles,
                                   occupancy: c.occupancy) {
-            return (r.rect, 0, "placed \(r.side.rawValue) \(PageMap.format(r.rect))")
+            return (r.rect, "placed \(r.side.rawValue) \(PageMap.format(r.rect))")
         }
         let area = c.pageRect.insetBy(dx: Placement.margin, dy: Placement.margin)
         let blockers = c.obstacles.map { $0.insetBy(dx: -4, dy: -4) }
@@ -530,25 +546,20 @@ enum ActionValidator {
             nearest = Placement.nearestClear(CGRect(origin: CGPoint(x: anchor.minX, y: anchor.maxY + Placement.gap), size: size),
                                              avoiding: blockers, in: area, maxDistance: Placement.farthest)
         }
-        if let r = nearest {
-            return (r, 0, "nothing beside it; nearest clear spot \(PageMap.format(r))")
-        }
-        guard c.canGrow else {
-            c.overflowed = true
-            return (CGRect(origin: .zero, size: size), 0, "no room on this page")
-        }
-        let grow = max(160, size.height + 80)
-        let oldHeight = c.pageSize.height
-        c.pageSize.height += grow
-        let x = min(max(anchor.minX, Placement.margin), max(Placement.margin, c.pageSize.width - size.width - Placement.margin))
-        let rect = CGRect(x: x, y: oldHeight + 30, width: size.width, height: size.height)
-        return (rect, grow, "no room: added \(Int(grow)) pt below the page, placed \(PageMap.format(rect))")
+        return nearest.map { ($0, "nothing beside it; nearest clear spot \(PageMap.format($0))") }
     }
 
     /// Inside a free space: the clear spot furthest left, then highest, so later writes this turn go under earlier
     /// ones. With room to spare it keeps off the space's edges and from what's already there; when the space is
     /// tight, it packs in. Too small for it: beside the space instead.
-    static func placeInside(_ size: CGSize, space: CGRect, _ c: inout ToolContext) -> (rect: CGRect, grow: CGFloat, note: String) {
+    static func placeInside(_ size: CGSize, space: CGRect, _ c: inout ToolContext) -> (rect: CGRect, note: String) {
+        if let found = spotInside(size, space: space, c) { return found }
+        let fallback = place(size, near: space, side: .below, &c)
+        return (fallback.rect, "didn't fit in the free space; " + fallback.note)
+    }
+
+    /// The clear spot inside a free space `placeInside` would take; nil if it doesn't fit there.
+    static func spotInside(_ size: CGSize, space: CGRect, _ c: ToolContext) -> (rect: CGRect, note: String)? {
         for room in [Placement.roomy, Placement.tight] {
             let inner = space.insetBy(dx: room.edge, dy: room.edge)
             guard size.width <= inner.width, size.height <= inner.height else { continue }
@@ -556,13 +567,12 @@ enum ActionValidator {
                 for y in stride(from: inner.minY, through: inner.maxY - size.height, by: 4) {
                     let r = CGRect(x: x, y: y, width: size.width, height: size.height)
                     if !c.isBlocked(r.insetBy(dx: -(room.pad - 4), dy: -(room.pad - 4))) {
-                        return (r, 0, "inside the free space \(PageMap.format(r))")
+                        return (r, "inside the free space \(PageMap.format(r))")
                     }
                 }
             }
         }
-        let fallback = place(size, near: space, side: .below, &c)
-        return (fallback.rect, fallback.grow, "didn't fit in the free space; " + fallback.note)
+        return nil
     }
 
     /// More than a sliver of `r` is covered by `rects`.
@@ -616,7 +626,7 @@ enum PlacementSide: String, Codable, Hashable { case right, below, above, left }
 enum Placement {
     static let gap: CGFloat = 12
     static let margin: CGFloat = 20
-    /// How far from its anchor a note may go before the page is extended instead.
+    /// How far from its anchor a note may go before it goes on a blank page instead.
     static let farthest: CGFloat = 480
 
     /// How much room is left around what the agent puts down.

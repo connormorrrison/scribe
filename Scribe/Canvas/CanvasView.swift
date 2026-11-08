@@ -270,7 +270,7 @@ struct CanvasView: View {
                         }
                         // A standard popover: it points at the button, and a tap outside closes it.
                         .popover(isPresented: $showsConversation, arrowEdge: .top) {
-                            HistoryPopover(model: model)
+                            HistoryPopover(model: model) { showsConversation = false }
                                 .presentationCompactAdaptation(.popover)
                         }
                         .steppingBack(showsMore)
@@ -281,7 +281,8 @@ struct CanvasView: View {
                     .padding(.horizontal, 4)
                     .canvasChrome(Capsule())
                 }
-                .overlay {
+                // From the top: an open answer grows down over the page.
+                .overlay(alignment: .top) {
                     AgentControl(model: model, openSettings: { showsSettings = true }, openHistory: { showsConversation = true })
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { model.frames.pill = $0 }
                         .steppingBack(showsMore)
@@ -290,19 +291,9 @@ struct CanvasView: View {
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { model.deskTop = $0 }
             }
 
-            if let reply = model.textReply {
-                AgentReplyBar(reply: reply, readAloud: { model.readReplyAloud() }, dismiss: { model.dismissReply() }) {
-                    model.dismissReply()
-                    showsConversation = true
-                }
-                .transition(.move(edge: .top).combined(with: .opacity))
-                .steppingBack(showsMore)
-            }
-
             banners
                 .steppingBack(showsMore)
         }
-        .animation(.snappy, value: model.textReply?.id)
         .padding(.horizontal, 16)
         .padding(.top, 12)
     }

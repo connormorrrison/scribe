@@ -7,7 +7,7 @@ case "$1" in
   anthropic)
     body=$(curl -s -w '\n%{http_code}' https://api.anthropic.com/v1/messages \
       -H "x-api-key: $key" -H "anthropic-version: 2026-10-21" -H "content-type: application/json" \
-      -d '{"model":"claude-haiku-5-5","max_tokens":256,"output_config":{"effort":"low"},"messages":[{"role":"user","content":"Reply with the word OK."}]}')
+      -d '{"model":"claude-sonnet-5-5","max_tokens":256,"output_config":{"effort":"low"},"messages":[{"role":"user","content":"Reply with the word OK."}]}')
     code=$(echo "$body" | tail -n1); json=$(echo "$body" | sed '$d')
     if [ "$code" = 200 ]; then
       echo "Anthropic: OK. Model $(echo "$json" | jq -r .model) replied: $(echo "$json" | jq -r '[.content[] | select(.type=="text") | .text] | join("")')"

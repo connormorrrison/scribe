@@ -3,8 +3,8 @@ import Foundation
 /// The only model Scribe ever uses for AI. `ClaudeClient` sends this ID on every request and takes no model parameter,
 /// and a build step fails if any other Claude model ID appears in the source.
 enum ClaudeModel {
-    static let id = "claude-haiku-5-5"
-    static let displayName = "Claude Haiku 5.5"
+    static let id = "claude-sonnet-5-5"
+    static let displayName = "Claude Sonnet 5.5"
 }
 
 /// A minimal client for Anthropic's Messages API (there's no official Swift SDK, so this is raw HTTP).
@@ -96,7 +96,7 @@ struct ClaudeClient {
         }
     }
 
-    /// Sends one Messages request to Claude Haiku 5.5.
+    /// Sends one Messages request to Claude Sonnet 5.5.
     func send(_ messages: [Message], system: String? = nil, maxTokens: Int = 16_000,
               effort: Effort = .medium) async throws -> Reply {
         struct Body: Encodable {
@@ -127,7 +127,7 @@ struct ClaudeClient {
         return try JSONDecoder().decode(Reply.self, from: data)
     }
 
-    /// The smallest real request: checks the key works and can use Claude Haiku 5.5.
+    /// The smallest real request: checks the key works and can use Claude Sonnet 5.5.
     func ping() async throws -> Reply {
         try await send([Message(role: .user, content: "Reply with the word OK.")], maxTokens: 256, effort: .low)
     }

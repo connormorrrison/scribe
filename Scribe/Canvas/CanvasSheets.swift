@@ -233,10 +233,11 @@ struct PageThumbnail: View {
 
 // MARK: - Conversation
 
-/// History, from More: presented like Settings, as a sheet with Done.
-/// The conversation, in a popover from the History button. Oldest at the top, newest at the bottom.
+/// History, in a popover from the History button: the conversation, with each step the agent took (writing on the
+/// page, making a visualization) between the question and the answer. Oldest at the top, newest at the bottom.
 struct HistoryPopover: View {
     let model: CanvasModel
+    let close: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -246,24 +247,55 @@ struct HistoryPopover: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 16)
                 .padding(.bottom, 4)
-            ConversationPanel(model: model)
+            ConversationPanel(model: model, close: close)
         }
         .frame(width: 380, height: 540)
     }
 }
 
-/// The conversation with the agent: what you said on the right, the agent's replies on the left, newest at the
-/// bottom.
+/// One thing in History: a message, or a step the agent took.
+enum HistoryItem: Identifiable {
+    case turn(ConversationTurn)
+    case step(HistoryEntry)
+
+    var id: UUID {
+        switch self {
+        case .turn(let turn): turn.id
+        case .step(let step): step.id
+        }
+    }
+
+    var date: Date {
+        switch self {
+        case .turn(let turn): turn.date
+        case .step(let step): step.date
+        }
+    }
+
+    /// The conversation and the agent's steps, in the order they happened. The person's own edits (pages added,
+    /// backgrounds changed) are left out: History is the exchange with the agent.
+    static func timeline(_ content: NoteContent) -> [HistoryItem] {
+        let items = content.conversation.map(HistoryItem.turn)
+            + content.history.filter { $0.author == .agent }.map(HistoryItem.step)
+        // Stable: things logged in the same instant keep the order they were added in.
+        return items.enumerated().sorted { ($0.element.date, $0.offset) < ($1.element.date, $1.offset) }.map(\.element)
+    }
+}
+
+/// The conversation with the agent: what you said on the right, the agent's replies on the left with its steps
+/// above them, newest at the bottom.
 struct ConversationPanel: View {
     let model: CanvasModel
+    let close: () -> Void
+    @AppStorage(AppSettings.pageBackground) private var defaultBackground = PageBackground.dots
 
-    private var turns: [ConversationTurn] { model.content.conversation }
+    private var items: [HistoryItem] { HistoryItem.timeline(model.content) }
 
     var body: some View {
         VStack(spacing: 0) {
-            if turns.isEmpty && model.agent == .idle {
+            if items.isEmpty && model.agent == .idle {
                 ContentUnavailableView("No Conversation Yet", systemImage: "waveform",
-                                       description: Text("Tap the blue dot and talk. What you say and what the agent says back show up here."))
+                                       description: Text("Tap the blue dot and talk. What you say, what the agent does on your page, and what it says back show up here."))
                     .frame(maxHeight: .infinity)
             } else {
                 messages
@@ -276,9 +308,18 @@ struct ConversationPanel: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 10) {
-                    ForEach(turns) { turn in
-                        ConversationBubble(turn: turn, replay: { model.replay(turn) })
-                            .id(turn.id)
+                    ForEach(items) { item in
+                        switch item {
+                        case .turn(let turn):
+                            ConversationBubble(turn: turn, replay: { model.replay(turn) })
+                                .id(turn.id)
+                        case .step(let step):
+                            AgentStepRow(step: step, opens: opens(step), preview: preview(of: step)) {
+                                model.show(step)
+                                close()
+                            }
+                            .id(step.id)
+                        }
                     }
                     if model.agent != .idle {
                         AgentStatusBubble(state: model.agent)
@@ -288,14 +329,29 @@ struct ConversationPanel: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.bottom, 16)
-                .animation(.snappy, value: turns.count)
+                .animation(.snappy, value: items.count)
                 .animation(.easeInOut(duration: 0.2), value: model.agent)
             }
             .scrollIndicators(.hidden)
             .defaultScrollAnchor(.bottom)
-            .onChange(of: turns.count) { _, _ in scrollToEnd(proxy) }
+            .onChange(of: items.count) { _, _ in scrollToEnd(proxy) }
             .onChange(of: model.agent) { _, _ in scrollToEnd(proxy) }
         }
+    }
+
+    /// A small picture of what the step made: the marks it drew on the page, or the visualization.
+    private func preview(of step: HistoryEntry) -> AgentStepPreview? {
+        if let id = step.visualizationID {
+            return model.visualizationPreview(id).map(AgentStepPreview.card)
+        }
+        return model.stepPreview(step, background: defaultBackground).map(AgentStepPreview.page)
+    }
+
+    /// The step has somewhere to go: its page, or its visualization, still in the note.
+    private func opens(_ step: HistoryEntry) -> Bool {
+        if let id = step.pageID, model.page(id) != nil { return true }
+        if let id = step.visualizationID { return model.content.visualizations.contains { $0.id == id } }
+        return false
     }
 
     private static let statusID = "status"
@@ -304,10 +360,90 @@ struct ConversationPanel: View {
         withAnimation(.snappy) {
             if model.agent != .idle {
                 proxy.scrollTo(Self.statusID, anchor: .bottom)
-            } else if let last = turns.last {
+            } else if let last = items.last {
                 proxy.scrollTo(last.id, anchor: .bottom)
             }
         }
+    }
+}
+
+/// A step the agent took, on the agent's side: a small symbol and a line of secondary text, with a small picture of
+/// what it drew or made under it. Tap it to see it on the page (or the visualization it made).
+private struct AgentStepRow: View {
+    let step: HistoryEntry
+    let opens: Bool
+    let preview: AgentStepPreview?
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: step.symbol ?? "pencil.and.scribble")
+                        .foregroundStyle(Landing.blue)
+                        .frame(width: 20)
+                    Text(step.text)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                    if opens {
+                        Image(systemName: "chevron.forward")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                if let preview {
+                    AgentStepPreviewView(preview: preview)
+                        .padding(.leading, 28)
+                        .padding(.bottom, 4)
+                }
+            }
+            .font(.system(size: 14, weight: .regular, design: .rounded))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .allowsHitTesting(opens)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityLabel("Agent \(step.text.prefix(1).lowercased() + step.text.dropFirst())")
+        .accessibilityHint(opens ? (step.visualizationID != nil ? "Double-tap to show it" : "Double-tap to go to the page") : "")
+    }
+}
+
+/// What a step's picture shows.
+enum AgentStepPreview {
+    /// The part of the page around the marks it drew.
+    case page(UIImage)
+    /// The visualization, as it looked just after it started.
+    case card(UIImage)
+}
+
+/// A step's picture in History: a piece of the page on paper, or a small dark card like the visualization's own.
+private struct AgentStepPreviewView: View {
+    let preview: AgentStepPreview
+
+    private static let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+
+    var body: some View {
+        switch preview {
+        case .page(let image):
+            picture(image, fitting: CanvasModel.previewSize)
+                .overlay(Self.shape.strokeBorder(Color(.separator), lineWidth: 0.5))
+        case .card(let image):
+            picture(image, fitting: CGSize(width: CanvasModel.previewSize.width, height: 180))
+                .background(Landing.card, in: Self.shape)
+        }
+    }
+
+    /// The image at its own shape, as large as fits in `box`, with rounded corners.
+    private func picture(_ image: UIImage, fitting box: CGSize) -> some View {
+        let size = image.size
+        let k = size.width > 0 && size.height > 0 ? min(box.width / size.width, box.height / size.height) : 0
+        return Image(uiImage: image)
+            .resizable()
+            .frame(width: size.width * k, height: size.height * k)
+            .clipShape(Self.shape)
+            .accessibilityHidden(true)
     }
 }
 

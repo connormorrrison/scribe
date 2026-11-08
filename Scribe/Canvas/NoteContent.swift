@@ -126,7 +126,8 @@ struct NotePage: Identifiable, Codable, Equatable {
     }
 }
 
-/// One line in the note's History.
+/// One line in the note's History. The agent's are steps it took (wrote on a page, made a visualization), shown in
+/// History between what was said, in the order they happened.
 struct HistoryEntry: Identifiable, Codable, Equatable {
     enum Author: String, Codable { case you, agent }
 
@@ -134,6 +135,15 @@ struct HistoryEntry: Identifiable, Codable, Equatable {
     var date = Date()
     var author: Author
     var text: String
+    /// An SF Symbol for the step.
+    var symbol: String?
+    /// The page it happened on: tapping the step in History turns to it.
+    var pageID: UUID?
+    /// The visualization it made: tapping the step brings the cards out.
+    var visualizationID: UUID?
+    /// The marks it drew, for the small picture of them in History. Missing from steps saved before History showed
+    /// them (and from erasing).
+    var markIDs: [UUID]?
 }
 
 /// One message in the conversation with the agent: something the person said (or typed), or the agent's reply.
