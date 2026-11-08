@@ -134,8 +134,8 @@ struct AgentControl: View {
     var body: some View {
         HStack(spacing: 0) {
             HStack(spacing: 0) {
-                AgentOrb(model: model, reduceMotion: reduceMotion)
-                    .frame(width: CanvasChromeMetrics.button, height: CanvasChromeMetrics.button)
+                AgentOrb(model: model, responding: state == .thinking || state == .speaking || shownReply != nil,
+                         reduceMotion: reduceMotion)
                     .modifier(OrbGather(trigger: mode, reduceMotion: reduceMotion))
                 if expanded && !typing && !streaming {
                     ShimmerText(text: model.agentLine, shimmering: state == .thinking, reduceMotion: reduceMotion)
@@ -431,23 +431,38 @@ private struct OutOfTheDot: ViewModifier {
     }
 }
 
-/// The agent's control: a microphone that fills with blue as the sound gets louder, from the bottom up. Empty when
-/// it's quiet (or untouched: tap to talk), full when loud. While the agent speaks it's a speaker, filling with the
-/// agent's voice the same way.
+/// The agent's control. A microphone while it's yours to talk: an empty outline at rest (tap to talk), filling with
+/// blue from the bottom as you speak, full when loud. The blue orb while the agent responds: breathing slowly as it
+/// thinks or writes, swelling with its voice as it speaks. The orb stays inside the control however loud it gets.
 struct AgentOrb: View {
     let model: CanvasModel
+    /// The agent is thinking, speaking, or streaming an answer.
+    let responding: Bool
     let reduceMotion: Bool
 
-    private var symbol: String { model.agent == .speaking ? "speaker.wave.2" : "mic" }
-
     var body: some View {
-        // Only this view reads the level, so the rest of the bar doesn't redraw 30 times a second.
-        let live = model.agent == .listening || model.agent == .speaking
-        // With Reduce Motion, no flickering fill: full while it listens or speaks.
-        let level = live ? (reduceMotion ? 1 : model.level) : 0
         ZStack {
-            Image(systemName: symbol)
-            Image(systemName: symbol + ".fill")
+            if responding {
+                orb.transition(.blurReplace)
+            } else {
+                microphone.transition(.blurReplace)
+            }
+        }
+        .frame(width: CanvasChromeMetrics.button, height: CanvasChromeMetrics.button)
+        .animation(.smooth(duration: 0.3), value: responding)
+        .accessibilityHidden(true)
+    }
+
+    // MARK: Microphone
+
+    private var microphone: some View {
+        // Only this view reads the level, so the rest of the bar doesn't redraw with every reading.
+        let listening = model.agent == .listening
+        // With Reduce Motion, no flickering fill: full while it listens.
+        let level = listening ? (reduceMotion ? 1 : model.level) : 0
+        return ZStack {
+            Image(systemName: "mic")
+            Image(systemName: "mic.fill")
                 .mask(alignment: .bottom) {
                     GeometryReader { geo in
                         Rectangle()
@@ -455,14 +470,43 @@ struct AgentOrb: View {
                             .frame(maxHeight: .infinity, alignment: .bottom)
                     }
                 }
-                // Readings come 10 to 30 times a second; a quick spring joins them into a smooth rise and fall.
+                // Readings come ten times a second; a quick spring joins them into a smooth rise and fall.
                 .animation(.spring(response: 0.14, dampingFraction: 0.75), value: level)
         }
         .imageScale(.large)
         .foregroundStyle(Landing.blue)
-        .contentTransition(.symbolEffect(.replace))
-        .animation(.smooth(duration: 0.25), value: symbol)
-        .accessibilityHidden(true)
+    }
+
+    // MARK: Orb
+
+    /// At rest the orb is small, so it has room to move a lot while staying small at its loudest: the halo goes
+    /// from 22 to 36 pt and the core from 12 to 20 pt, well inside the 44 pt control.
+    private static let core: CGFloat = 12
+    private static let halo: CGFloat = 22
+    private static let haloGrowth: CGFloat = 36.0 / 22 - 1
+    private static let coreGrowth: CGFloat = 20.0 / 12 - 1
+
+    private var orb: some View {
+        let speaking = model.agent == .speaking
+        return TimelineView(.animation(paused: reduceMotion || speaking)) { context in
+            // Thinking or writing: a slow, gentle breath. Speaking: the voice, in full, so loud syllables throw it
+            // wide and pauses pull it right back in.
+            let breath = (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / 1.8) + 1) / 2
+            let swell = reduceMotion ? 0 : (speaking ? model.level : 0.3 * breath)
+            // Flat: two plain blue circles.
+            ZStack {
+                Circle()
+                    .fill(Landing.blue.opacity(0.18))
+                    .frame(width: Self.halo, height: Self.halo)
+                    .scaleEffect(1 + Self.haloGrowth * swell)
+                Circle()
+                    .fill(Landing.blue)
+                    .frame(width: Self.core, height: Self.core)
+                    .scaleEffect(1 + Self.coreGrowth * swell)
+            }
+            // Quick and lively, so it keeps up with the syllables.
+            .animation(.spring(response: 0.12, dampingFraction: 0.6), value: swell)
+        }
     }
 }
 
@@ -564,7 +608,7 @@ struct ChoiceBanner: View {
 /// "1 / 3", which opens the Pages popover, and + to add a page after this one.
 /// The page dots, as on the home screen: the system page control, so it looks and behaves the standard way (tap a
 /// side to step, drag along it to scrub, a platter behind it while you do, shrinking dots for long notes). Hidden
-/// for a single page. The dots are dark because they always sit on paper.
+/// for nothing: they show on a one-page note too. The dots are dark because they always sit on paper.
 struct PageDots: UIViewRepresentable {
     let count: Int
     let current: Int
@@ -572,7 +616,7 @@ struct PageDots: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UIPageControl {
         let control = UIPageControl()
-        control.hidesForSinglePage = true
+        control.hidesForSinglePage = false
         control.backgroundStyle = .automatic
         control.pageIndicatorTintColor = UIColor(white: 0, alpha: 0.2)
         control.currentPageIndicatorTintColor = UIColor(white: 0, alpha: 0.7)

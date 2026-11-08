@@ -65,19 +65,15 @@ struct CanvasView: View {
                 VStack(spacing: 0) {
                     bottomEdge
                         .steppingBack(showsMore)
-                    // Which page this is, like the home screen's page dots: at the very bottom, under the toolbar.
-                    // Tap or drag along them to move. Only with more than one page, so a single page keeps the
-                    // toolbar at the bottom.
-                    if model.content.pages.count > 1 {
-                        PageDots(count: model.content.pages.count, current: model.currentPageIndex) { index in
-                            guard model.content.pages.indices.contains(index) else { return }
-                            withAnimation(.snappy) { model.currentPageID = model.content.pages[index].id }
-                        }
-                        .fixedSize()
-                        .padding(.top, -6)
-                        .steppingBack(showsMore)
-                        .transition(.opacity)
+                    // Which page this is, like the home screen's page dots: at the very bottom, under the toolbar,
+                    // always (one dot for a one-page note). Tap or drag along them to move.
+                    PageDots(count: model.content.pages.count, current: model.currentPageIndex) { index in
+                        guard model.content.pages.indices.contains(index) else { return }
+                        withAnimation(.snappy) { model.currentPageID = model.content.pages[index].id }
                     }
+                    .fixedSize()
+                    .padding(.top, -6)
+                    .steppingBack(showsMore)
                 }
                 // Where the bottom controls (toolbar and dots) begin.
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { model.deskBottom = $0 }
