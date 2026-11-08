@@ -176,7 +176,7 @@ enum AgentTools {
         Keep words on the page to labels of a few words. Say the explaining out loud in your reply instead, \
         one line about what you drew. \
         Always target things by their id from the page map. Never guess coordinates from the picture: every object has \
-        exact bounds. To write in empty space, use near {"id": "free_N"}. Use outline_region on a ·traceable object to \
+        exact bounds. Put each thing beside what it's about: `near` its id. Use a free_N space only for something that         isn't about anything already on the page, and then the one nearest their work and on screen, not simply the         first listed. Spread your marks out and leave room around them rather than packing them together. Use outline_region on a ·traceable object to \
         trace its real lines; figures like maps are split into parts you can trace one by one. Each result says where your mark went; if it says something was moved, that's fine.
         """
 }

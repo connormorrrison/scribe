@@ -394,7 +394,7 @@ struct InkCanvas: UIViewRepresentable {
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
             MainActor.assumeIsolated {
                 model.selectedImage = nil
-                model.penDown()
+                model.moveOn()
             }
         }
 

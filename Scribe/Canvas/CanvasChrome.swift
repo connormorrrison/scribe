@@ -121,7 +121,7 @@ struct AgentControl: View {
 
     /// The field is as wide as the reply bar under it, so the question and the answer line up.
     private static let fieldWidth: CGFloat = AgentReplyBar.width
-    private static let replyWidth: CGFloat = AgentReplyBar.width
+    private static let replyWidth: CGFloat = 400
     /// The base body size, as in the rest of the app.
     static let textSize: CGFloat = 17
     private static let lineFont = UIFont.systemFont(ofSize: textSize, weight: .regular)
@@ -226,8 +226,9 @@ struct AgentControl: View {
             }
         }
         .onChange(of: fieldFocused) { _, focused in
-            // Tapped away from an empty field: fold back into the dot.
-            if !focused, typing, !canSend { model.showsKeyboard = false }
+            // Tapped away from an empty field: fold back into the dot. Not while an answer is under it: the two go
+            // together, and the person may just be putting the keyboard down to read.
+            if !focused, typing, !canSend, model.textReply == nil { model.showsKeyboard = false }
         }
         .contextMenu {
             if state == .idle {
@@ -248,7 +249,7 @@ struct AgentControl: View {
 
     private var typeField: some View {
         HStack(spacing: 0) {
-            TextField("Ask the agent…", text: $model.draft)
+            TextField(model.textReply == nil ? "Ask the agent…" : "Reply…", text: $model.draft)
                 .font(.system(size: Self.textSize, weight: .regular, design: .rounded))
                 .focused($fieldFocused)
                 .submitLabel(.send)
@@ -398,15 +399,16 @@ private struct ReplyStream: View {
 
 /// The agent's answer when it isn't spoken (to something typed, or asked of a lasso), just under the agent control.
 /// One line for a short answer, growing to three at most; the whole answer is a tap away in History. It holds still
-/// to be read at the person's own pace, and stays until they move on: writing on the page, flicking it up, or asking
-/// again. Read Aloud speaks it.
+/// to be read at the person's own pace, and stays until they move on: tapping or writing on the page, flicking it
+/// up, closing the field, or asking again (`CanvasModel.moveOn()`). Read Aloud speaks it.
 struct AgentReplyBar: View {
     let reply: AgentReply
     let readAloud: () -> Void
     let dismiss: () -> Void
     let openHistory: () -> Void
 
-    static let width: CGFloat = 400
+    /// Narrow enough to clear a visualization card in the top right.
+    static let width: CGFloat = 340
     @State private var lift: CGFloat = 0
 
     var body: some View {

@@ -546,14 +546,18 @@ enum ActionValidator {
     }
 
     /// Inside a free space: the clear spot furthest left, then highest, so later writes this turn go under earlier
-    /// ones. Too small for it: beside the space instead.
+    /// ones. With room to spare it keeps off the space's edges and from what's already there; when the space is
+    /// tight, it packs in. Too small for it: beside the space instead.
     static func placeInside(_ size: CGSize, space: CGRect, _ c: inout ToolContext) -> (rect: CGRect, grow: CGFloat, note: String) {
-        let inner = space.insetBy(dx: 4, dy: 4)
-        if size.width <= inner.width, size.height <= inner.height {
+        for room in [Placement.roomy, Placement.tight] {
+            let inner = space.insetBy(dx: room.edge, dy: room.edge)
+            guard size.width <= inner.width, size.height <= inner.height else { continue }
             for x in stride(from: inner.minX, through: inner.maxX - size.width, by: 4) {
                 for y in stride(from: inner.minY, through: inner.maxY - size.height, by: 4) {
                     let r = CGRect(x: x, y: y, width: size.width, height: size.height)
-                    if !c.isBlocked(r) { return (r, 0, "inside the free space \(PageMap.format(r))") }
+                    if !c.isBlocked(r.insetBy(dx: -(room.pad - 4), dy: -(room.pad - 4))) {
+                        return (r, 0, "inside the free space \(PageMap.format(r))")
+                    }
                 }
             }
         }
@@ -615,13 +619,40 @@ enum Placement {
     /// How far from its anchor a note may go before the page is extended instead.
     static let farthest: CGFloat = 480
 
-    /// The clear rectangle of `size` closest to `anchor`, trying `side` first and then the others. Nil if nothing
-    /// fits. With an occupancy grid, a spot must also be clear of every drawn pixel, not just the listed boxes.
+    /// How much room is left around what the agent puts down.
+    struct Room {
+        /// From the thing it's beside.
+        var gap: CGFloat
+        /// From everything else: listed boxes, and (less) drawn pixels.
+        var pad: CGFloat
+        var pixels: CGFloat
+        /// From the page's edges, and a free space's.
+        var edge: CGFloat
+    }
+
+    /// Breathing room, so marks don't crowd each other or the person's work. Tried first.
+    static let roomy = Room(gap: 20, pad: 14, pixels: 8, edge: 28)
+    /// Just clear, for a full page. Only when nothing fits with breathing room.
+    static let tight = Room(gap: gap, pad: 4, pixels: 2, edge: margin)
+
+    /// The clear rectangle of `size` closest to `anchor`, trying `side` first and then the others, with breathing room
+    /// if anywhere has it, otherwise just clear. Nil if nothing fits. With an occupancy grid, a spot must also be
+    /// clear of every drawn pixel, not just the listed boxes.
     static func find(size: CGSize, near anchor: CGRect, side: PlacementSide, page: CGRect, obstacles: [CGRect],
                      occupancy: OccupancyGrid? = nil) -> (rect: CGRect, side: PlacementSide)? {
+        for room in [roomy, tight] {
+            if let found = find(size: size, near: anchor, side: side, page: page, obstacles: obstacles,
+                                occupancy: occupancy, room: room) { return found }
+        }
+        return nil
+    }
+
+    private static func find(size: CGSize, near anchor: CGRect, side: PlacementSide, page: CGRect, obstacles: [CGRect],
+                             occupancy: OccupancyGrid?, room: Room) -> (rect: CGRect, side: PlacementSide)? {
         let order = [side] + [PlacementSide.right, .below, .above, .left].filter { $0 != side }
-        let area = page.insetBy(dx: margin, dy: margin)
-        let blockers = obstacles.map { $0.insetBy(dx: -4, dy: -4) }
+        let area = page.insetBy(dx: room.edge, dy: room.edge)
+        let blockers = obstacles.map { $0.insetBy(dx: -room.pad, dy: -room.pad) }
+        let gap = room.gap
         let a = anchor.standardized
         for s in order {
             var best: (rect: CGRect, distance: CGFloat)?
@@ -637,7 +668,7 @@ enum Placement {
                     case .above: r = CGRect(x: a.minX + lateral, y: a.minY - gap - o - size.height, width: size.width, height: size.height)
                     }
                     guard area.contains(r), !blockers.contains(where: { $0.intersects(r) }),
-                          occupancy?.isFree(r.insetBy(dx: -2, dy: -2)) ?? true else { continue }
+                          occupancy?.isFree(r.insetBy(dx: -room.pixels, dy: -room.pixels)) ?? true else { continue }
                     let d = hypot(r.midX - a.midX, r.midY - a.midY)
                     if best == nil || d < best!.distance { best = (r, d) }
                 }

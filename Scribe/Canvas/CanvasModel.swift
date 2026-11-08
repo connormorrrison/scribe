@@ -664,6 +664,7 @@ final class CanvasModel {
     /// A finger tap on a page: selects the topmost image under it, or clears the selection. With the lasso, a tap
     /// away from the selection puts it down, and a tap on an empty spot offers to paste copied ink.
     func tapPage(_ pageID: UUID, at point: CGPoint) {
+        moveOn()
         if palette.tool == .lasso {
             if let lasso, lasso.pageID == pageID, lasso.bounds.insetBy(dx: -12, dy: -12).contains(point) { return }
             let hadSelection = lasso != nil || pasteSpot != nil
@@ -1088,8 +1089,9 @@ final class CanvasModel {
         }
         // Done drawing: the cursor goes back into the pill before the answer.
         returnCursor()
-        let answer = said.isEmpty ? (shown > 0 ? "Here it is, in the top right." : "There, on your page.")
-            : said.joined(separator: " ")
+        // Only the last thing said is the answer: text written before or between tool calls tends to be restated
+        // in full once the marks are on the page, and joining them reads the same answer out twice.
+        let answer = said.last ?? (shown > 0 ? "Here it is, in the top right." : "There, on your page.")
         content.conversation.append(ConversationTurn(speaker: .agent, text: answer, spoken: speak))
         changed()
         if speak {
@@ -1419,12 +1421,27 @@ final class CanvasModel {
         run { model in try await model.speak(text) }
     }
 
-    /// The person started writing on the page: they've moved on from the agent's text answer, and from the field
-    /// if nothing's typed in it.
-    func penDown() {
+    /// The person went back to the page (tapped it, or started writing or erasing): the exchange with the agent
+    /// closes. The text answer goes, and the field folds away with it. A follow-up already being typed is kept: the
+    /// field stays with it, and only the keyboard goes down.
+    func moveOn() {
+        guard agent == .idle else { return }
         if textReply != nil { reply = nil }
-        if showsKeyboard, agent == .idle, draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        guard showsKeyboard else { return }
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             showsKeyboard = false
+        } else {
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        }
+    }
+
+    /// The keyboard button: opens the field, or closes it along with the answer under it.
+    func toggleKeyboard() {
+        if showsKeyboard {
+            showsKeyboard = false
+            if textReply != nil { reply = nil }
+        } else {
+            showsKeyboard = true
         }
     }
 
@@ -1472,12 +1489,14 @@ final class CanvasModel {
         usually out loud: their words reach you through speech recognition, so read past small transcription \
         mistakes. Your replies may be read aloud by a text-to-speech voice, so write plain conversational \
         sentences: no markdown, lists, headings, code, emoji or links. Be brief, usually one to three sentences, \
-        unless they ask for more.\(page)
+        unless they ask for more. Write nothing before or between tool calls: do all your tool calls first, then \
+        write your reply once, at the very end. Only that last message is shown and read aloud. Say each thing \
+        once.\(page)
 
         You can also show things off the page. When they ask to see, visualize, show, model or simulate something, or a picture \
         or 3D model would explain it far better than words, call \(VisualizationTool.name): it opens as a card in the top \
         right, over their page. Make it something to play with, with controls for what matters, not just a picture. \
-        Say one short line first if you like, then make it, then tell them in one short sentence what to try. Never \
+        Make it, then tell them in one short sentence what to try. Never \
         describe the code or read the page out.\(open)
         """
     }

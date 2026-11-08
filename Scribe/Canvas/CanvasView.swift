@@ -405,7 +405,7 @@ struct CanvasView: View {
                     .layoutPriority(1)
 
                 ChromeButton(title: "Type to the Agent", symbol: "keyboard", selected: model.showsKeyboard) {
-                    model.showsKeyboard.toggle()
+                    model.toggleKeyboard()
                 }
                 .canvasChrome(Capsule())
                 .frame(maxWidth: .infinity, alignment: .trailing)
